@@ -14,7 +14,7 @@ import { TelegramChannel } from './channels/telegram/telegram.channel';
 import { DiscordChannel } from './channels/discord/discord.channel';
 import { ZaloChannel } from './channels/zalo/zalo.channel';
 import { SlackChannel } from './channels/slack/slack.channel';
-import { WebChatGateway } from './channels/webchat/webchat.gateway';
+// WebChatGateway is provided by GatewayModule (needs JwtService)
 
 // LLM Providers
 import { OpenAIProvider } from './providers/openai/openai.provider';
@@ -42,7 +42,6 @@ import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
     DiscordChannel,
     ZaloChannel,
     SlackChannel,
-    WebChatGateway,
 
     // Providers
     OpenAIProvider,
@@ -51,6 +50,6 @@ import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
     DeepSeekProvider,
     OpenRouterProvider,
   ],
-  exports: [AgentService],
+  exports: [AgentService, SkillsModule],
 })
 export class AgentModule {}

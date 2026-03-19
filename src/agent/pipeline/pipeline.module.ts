@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PipelineService } from './pipeline.service';
 import { ReceiveStep } from './steps/receive.step';
 import { PreprocessStep } from './steps/preprocess.step';
@@ -17,7 +17,7 @@ import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
   imports: [
     ChannelsModule,
     ProvidersModule,
-    SkillsModule,
+    forwardRef(() => SkillsModule),
     ModelRouterModule,
     ChatModule,
     UsersModule,

@@ -22,6 +22,18 @@ export class ChatService {
     });
   }
 
+  async findByThreadIdForUser(
+    threadId: string,
+    userId: number,
+    limit = 50,
+  ): Promise<ChatMessage[]> {
+    return this.messageRepo.find({
+      where: { threadId, userId },
+      order: { createdAt: 'ASC' },
+      take: limit,
+    });
+  }
+
   async getRecentMessages(
     threadId: string,
     limit = 20,

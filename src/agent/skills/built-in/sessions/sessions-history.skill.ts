@@ -55,8 +55,9 @@ export class SessionsHistorySkill implements ISkillRunner {
     const { threadId, limit = 20, includeTools = false } = context.parameters;
 
     try {
-      let messages = await this.chatService.findByThreadId(
+      let messages = await this.chatService.findByThreadIdForUser(
         threadId as string,
+        context.userId,
         limit as number,
       );
 

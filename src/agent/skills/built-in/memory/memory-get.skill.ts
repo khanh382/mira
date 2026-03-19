@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RegisterSkill } from '../../decorators/skill.decorator';
+import { UsersService } from '../../../../modules/users/users.service';
+import { WorkspaceService } from '../../../../gateway/workspace/workspace.service';
 import {
   ISkillRunner,
   ISkillDefinition,
@@ -36,6 +38,11 @@ const PARAMETERS_SCHEMA = {
 export class MemoryGetSkill implements ISkillRunner {
   private readonly logger = new Logger(MemoryGetSkill.name);
 
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly workspaceService: WorkspaceService,
+  ) {}
+
   get definition(): ISkillDefinition {
     return {
       code: 'memory_get',
@@ -49,18 +56,32 @@ export class MemoryGetSkill implements ISkillRunner {
 
   async execute(context: ISkillExecutionContext): Promise<ISkillResult> {
     const start = Date.now();
-    const { path: filePath, from, lines } = context.parameters;
+    const { path: filePath, from, lines } = context.parameters as {
+      path: string;
+      from?: number;
+      lines?: number;
+    };
 
     try {
       const fs = await import('fs/promises');
       const path = await import('path');
 
-      // TODO: Configure workspace directory
-      const workspaceDir = process.env.AGENT_WORKSPACE || process.cwd();
-      const fullPath = path.resolve(workspaceDir, filePath as string);
+      const user = await this.usersService.findById(context.userId);
+      if (!user) {
+        return {
+          success: false,
+          error: 'User not found',
+          metadata: { durationMs: Date.now() - start },
+        };
+      }
+
+      const workspaceDir = this.workspaceService.getUserWorkspaceDir(
+        user.identifier,
+      );
+      const fullPath = path.resolve(workspaceDir, filePath);
 
       // Security: prevent path traversal outside workspace
-      if (!fullPath.startsWith(workspaceDir)) {
+      if (!fullPath.startsWith(workspaceDir + path.sep) && fullPath !== workspaceDir) {
         return {
           success: false,
           error: 'Path traversal not allowed',
@@ -73,8 +94,8 @@ export class MemoryGetSkill implements ISkillRunner {
 
       if (from !== undefined || lines !== undefined) {
         const allLines = content.split('\n');
-        const startLine = (from as number) || 0;
-        const count = (lines as number) || allLines.length;
+        const startLine = from ?? 0;
+        const count = lines ?? allLines.length;
         result = allLines.slice(startLine, startLine + count).join('\n');
       }
 

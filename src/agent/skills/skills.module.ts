@@ -26,6 +26,7 @@ import { GoogleModule } from './built-in/google/google.module';
 import { SchedulerModule } from '../scheduler/scheduler.module';
 import { LearningModule } from '../learning/learning.module';
 import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
+import { ChannelsModule } from '../channels/channels.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
     GoogleModule,
     LearningModule,
     WorkspaceModule,
+    ChannelsModule,
     forwardRef(() => SchedulerModule),
   ],
   providers: [

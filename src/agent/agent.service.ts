@@ -32,7 +32,7 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
       context: {
         channels: this.channelsService.listConfiguredChannels().map((c) => c.meta.id),
         providers: this.providersService.listConfiguredProviders().map((p) => p.providerId),
-        skills: this.skillsService.listSkills().map((s) => s.code),
+        skills: this.skillsService.listAllSkills().map((s) => s.code),
       },
     });
 
@@ -64,7 +64,7 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
         name: p.displayName,
         configured: p.isConfigured(),
       })),
-      skills: this.skillsService.listSkills(),
+      skills: this.skillsService.listAllSkills(),
     };
   }
 }

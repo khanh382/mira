@@ -45,6 +45,7 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
   providers: [
     GatewayService,
     ThreadResolverService,
+    WebChatGateway,
   ],
   exports: [GatewayService, WorkspaceModule],
 })

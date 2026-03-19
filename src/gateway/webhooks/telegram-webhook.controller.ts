@@ -11,10 +11,10 @@ import { ChatPlatform } from '../../modules/chat/entities/chat-thread.entity';
  * Route: POST /webhooks/telegram/:botToken
  * Mỗi bot có URL riêng → hệ thống tìm BotUser từ token.
  *
- * Access Control:
- * 1. Incoming telegram user_id → kiểm tra BotAccessService.checkAccess()
- * 2. Nếu không có quyền → kiểm tra xem có phải verification code không
- * 3. Nếu có quyền → route vào GatewayService
+ * Security model:
+ * - botToken trong URL là secret per-user (chỉ Telegram và owner biết)
+ * - BotAccessService.checkAccess() đối chiếu senderId với owner's telegram_id
+ * - bot_access_grants cho phép cấp quyền thêm cho người khác (qua verification code)
  */
 @Controller('webhooks/telegram')
 export class TelegramWebhookController {
@@ -44,7 +44,6 @@ export class TelegramWebhookController {
       `Telegram update from ${telegramUserId} via bot ${botToken.slice(0, 8)}...`,
     );
 
-    // Kiểm tra xem tin nhắn có phải là verification code không (6 ký tự hex)
     if (/^[A-Fa-f0-9]{6}$/.test(text)) {
       const verified = await this.botAccessService.verifyCode(
         botToken,
@@ -57,7 +56,6 @@ export class TelegramWebhookController {
       }
     }
 
-    // Kiểm tra quyền truy cập
     const { allowed, botUser, ownerUid } = await this.botAccessService.checkAccess(
       botToken,
       BotPlatform.TELEGRAM,
@@ -71,7 +69,6 @@ export class TelegramWebhookController {
       return { ok: true, denied: true };
     }
 
-    // Route vào pipeline — dùng owner's uid cho context
     await this.gatewayService.handleMessage(ownerUid, text, {
       channelId: 'telegram',
       platform: ChatPlatform.TELEGRAM,
