@@ -3,7 +3,6 @@ import {
   IChannelAdapter,
   IChannelCapabilities,
   IChannelMeta,
-  IInboundMessage,
   IOutboundMessage,
 } from '../interfaces/channel.interface';
 
@@ -27,23 +26,30 @@ export class TelegramChannel implements IChannelAdapter {
     maxMessageLength: 4096,
   };
 
-  private botToken: string | null = null;
+  private activeBots = new Map<string, string>();
 
   async initialize(config: Record<string, unknown>): Promise<void> {
-    // TODO: Initialize Telegram bot with token from BotUser
-    this.logger.log('Telegram channel initialized');
+    this.logger.log(
+      `Telegram channel initialized (${this.activeBots.size} bots active)`,
+    );
   }
 
   async shutdown(): Promise<void> {
+    this.activeBots.clear();
     this.logger.log('Telegram channel shutdown');
   }
 
+  registerBot(botToken: string, ownerIdentifier: string): void {
+    this.activeBots.set(botToken, ownerIdentifier);
+  }
+
   async sendMessage(message: IOutboundMessage): Promise<void> {
-    // TODO: Send message via Telegram Bot API
-    this.logger.debug(`Sending message to ${message.targetId}`);
+    this.logger.debug(
+      `Outbound Telegram → ${message.targetId}: ${message.content.slice(0, 50)}...`,
+    );
   }
 
   isConfigured(): boolean {
-    return !!this.botToken;
+    return this.activeBots.size > 0;
   }
 }

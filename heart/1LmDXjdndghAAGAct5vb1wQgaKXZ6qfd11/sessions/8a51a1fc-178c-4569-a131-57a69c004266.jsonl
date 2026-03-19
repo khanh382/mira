@@ -1,0 +1,4 @@
+{"type":"message","timestamp":"2026-03-19T10:14:37.800Z","message":{"role":"user","content":"xin chào"}}
+{"type":"message","timestamp":"2026-03-19T10:14:41.375Z","message":{"role":"assistant","content":"xin chào! Mình luôn sẵn sàng hỗ trợ bạn. Bạn cần giúp gì hôm nay không? 😊"},"tokensUsed":4750}
+{"type":"message","timestamp":"2026-03-19T10:19:28.530Z","message":{"role":"user","content":"bạn tên là Mira, tôi tên là Khánh,  gọi tôi là sếp\nhãy luôn ghi nhớ điều này"}}
+{"type":"message","timestamp":"2026-03-19T10:19:48.660Z","message":{"role":"assistant","content":"Em đã lưu thông tin vào bộ nhớ. Em sẽ luôn gọi sếp Khánh với sự tôn trọng và xưng hô phù hợp. Sếp cần em giúp gì ạ?"},"tokensUsed":9312}

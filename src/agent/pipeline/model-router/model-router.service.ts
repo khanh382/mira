@@ -242,8 +242,9 @@ export class ModelRouterService {
     // Fallback qua OpenRouter nếu có
     if (this.hasOpenRouter) {
       const preferred = candidates[0];
+      const orModel = preferred.openrouterModel ?? preferred.id;
       return {
-        model: `openrouter/${preferred.model}`,
+        model: `openrouter/${orModel}`,
         tier,
         reason: `${reason} (via openrouter fallback)`,
         fallback: true,

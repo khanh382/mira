@@ -1,20 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ILlmProvider, ILlmRequestOptions, ILlmResponse } from './interfaces/llm-provider.interface';
+import { GlobalConfigService } from '../../modules/global-config/global-config.service';
 
-/**
- * ProvidersService quản lý registry LLM providers.
- * Kế thừa pattern provider resolution từ OpenClaw:
- * model string → tìm provider phù hợp → gọi API.
- */
 @Injectable()
 export class ProvidersService {
   private readonly logger = new Logger(ProvidersService.name);
   private readonly providers = new Map<string, ILlmProvider>();
+  private keysLoaded = false;
+
+  constructor(private readonly globalConfigService: GlobalConfigService) {}
 
   registerProvider(provider: ILlmProvider): void {
     this.providers.set(provider.providerId, provider);
     this.logger.log(
-      `LLM Provider registered: ${provider.displayName} (${provider.supportedModels.length} models)`,
+      `LLM Provider registered: ${provider.displayName} (${provider.providerId})`,
     );
   }
 
@@ -31,9 +30,20 @@ export class ProvidersService {
   }
 
   /**
-   * Resolve model string (e.g. "anthropic/claude-sonnet-4-20250514") → provider + model name.
-   * Supports "provider/model" format or bare model name with auto-detection.
+   * Ensure all providers have loaded their API keys from DB.
+   * Called lazily before first resolve/chat.
    */
+  private async ensureKeysLoaded(): Promise<void> {
+    if (this.keysLoaded) return;
+
+    for (const provider of this.providers.values()) {
+      if (typeof (provider as any).ensureKey === 'function') {
+        await (provider as any).ensureKey();
+      }
+    }
+    this.keysLoaded = true;
+  }
+
   resolveProvider(model: string): { provider: ILlmProvider; modelName: string } | null {
     if (model.includes('/')) {
       const [providerId, ...rest] = model.split('/');
@@ -55,6 +65,8 @@ export class ProvidersService {
   }
 
   async chat(options: ILlmRequestOptions): Promise<ILlmResponse> {
+    await this.ensureKeysLoaded();
+
     const resolved = this.resolveProvider(options.model);
     if (!resolved) {
       throw new Error(`No configured provider found for model: ${options.model}`);

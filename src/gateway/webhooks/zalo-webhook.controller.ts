@@ -8,18 +8,11 @@ import {
   Headers,
 } from '@nestjs/common';
 import { BotAccessService } from '../../modules/bot-users/bot-access.service';
+import { BotDeliveryService } from '../../modules/bot-users/bot-delivery.service';
 import { BotPlatform } from '../../modules/bot-users/entities/bot-access-grant.entity';
 import { GatewayService } from '../gateway.service';
 import { ChatPlatform } from '../../modules/chat/entities/chat-thread.entity';
 
-/**
- * Zalo OA Webhook Controller.
- *
- * Security model (giống Telegram):
- * - botToken trong URL là secret per-user (chỉ Zalo OA và owner biết)
- * - BotAccessService.checkAccess() đối chiếu senderId với owner's zalo_id
- * - bot_access_grants cho phép cấp quyền cho người khác (qua verification code)
- */
 @Controller('webhooks/zalo')
 export class ZaloWebhookController {
   private readonly logger = new Logger(ZaloWebhookController.name);
@@ -27,6 +20,7 @@ export class ZaloWebhookController {
   constructor(
     private readonly botAccessService: BotAccessService,
     private readonly gatewayService: GatewayService,
+    private readonly deliveryService: BotDeliveryService,
   ) {}
 
   @Post(':botToken')
@@ -80,6 +74,11 @@ export class ZaloWebhookController {
         content,
       );
       if (verified) {
+        await this.deliveryService.sendZalo(
+          botToken,
+          senderId,
+          '✅ Xác thực thành công! Bạn đã được cấp quyền truy cập bot.',
+        );
         return { ok: true, verified: true };
       }
     }
@@ -98,10 +97,14 @@ export class ZaloWebhookController {
       return { ok: true, denied: true };
     }
 
-    await this.gatewayService.handleMessage(ownerUid, content, {
+    const result = await this.gatewayService.handleMessage(ownerUid, content, {
       channelId: 'zalo',
       platform: ChatPlatform.ZALO,
     });
+
+    if (result.response) {
+      await this.deliveryService.sendZalo(botToken, senderId, result.response);
+    }
 
     return { ok: true };
   }

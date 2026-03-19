@@ -4,6 +4,8 @@ import { BotUser } from './entities/bot-user.entity';
 import { BotAccessGrant } from './entities/bot-access-grant.entity';
 import { BotUsersService } from './bot-users.service';
 import { BotAccessService } from './bot-access.service';
+import { BotDeliveryService } from './bot-delivery.service';
+import { BotBootstrapService } from './bot-bootstrap.service';
 import { UsersModule } from '../users/users.module';
 
 @Module({
@@ -11,7 +13,12 @@ import { UsersModule } from '../users/users.module';
     TypeOrmModule.forFeature([BotUser, BotAccessGrant]),
     UsersModule,
   ],
-  providers: [BotUsersService, BotAccessService],
-  exports: [BotUsersService, BotAccessService],
+  providers: [
+    BotUsersService,
+    BotAccessService,
+    BotDeliveryService,
+    BotBootstrapService,
+  ],
+  exports: [BotUsersService, BotAccessService, BotDeliveryService],
 })
 export class BotUsersModule {}

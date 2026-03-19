@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
 import { HooksService } from './hooks/hooks.service';
 import { InternalHookEvent } from './hooks/enums/hook-events.enum';
 import { ChannelsService } from './channels/channels.service';
@@ -6,6 +6,17 @@ import { ProvidersService } from './providers/providers.service';
 import { SkillsService } from './skills/skills.service';
 import { PipelineService } from './pipeline/pipeline.service';
 import { IInboundMessage } from './channels/interfaces/channel.interface';
+import { IChannelAdapter } from './channels/interfaces/channel.interface';
+import { ILlmProvider } from './providers/interfaces/llm-provider.interface';
+import { OpenAIProvider } from './providers/openai/openai.provider';
+import { AnthropicProvider } from './providers/anthropic/anthropic.provider';
+import { GeminiProvider } from './providers/gemini/gemini.provider';
+import { DeepSeekProvider } from './providers/deepseek/deepseek.provider';
+import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
+import { TelegramChannel } from './channels/telegram/telegram.channel';
+import { DiscordChannel } from './channels/discord/discord.channel';
+import { ZaloChannel } from './channels/zalo/zalo.channel';
+import { SlackChannel } from './channels/slack/slack.channel';
 
 @Injectable()
 export class AgentService implements OnModuleInit, OnModuleDestroy {
@@ -17,10 +28,44 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
     private readonly providersService: ProvidersService,
     private readonly skillsService: SkillsService,
     private readonly pipelineService: PipelineService,
+    // LLM Providers
+    @Optional() private readonly openaiProvider: OpenAIProvider,
+    @Optional() private readonly anthropicProvider: AnthropicProvider,
+    @Optional() private readonly geminiProvider: GeminiProvider,
+    @Optional() private readonly deepseekProvider: DeepSeekProvider,
+    @Optional() private readonly openrouterProvider: OpenRouterProvider,
+    // Channel adapters
+    @Optional() private readonly telegramChannel: TelegramChannel,
+    @Optional() private readonly discordChannel: DiscordChannel,
+    @Optional() private readonly zaloChannel: ZaloChannel,
+    @Optional() private readonly slackChannel: SlackChannel,
   ) {}
 
   async onModuleInit() {
     this.logger.log('Agent system bootstrapping...');
+
+    // Register LLM providers
+    const providers: (ILlmProvider | undefined)[] = [
+      this.openaiProvider,
+      this.anthropicProvider,
+      this.geminiProvider,
+      this.deepseekProvider,
+      this.openrouterProvider,
+    ];
+    for (const provider of providers) {
+      if (provider) this.providersService.registerProvider(provider);
+    }
+
+    // Register channel adapters
+    const channels: (IChannelAdapter | undefined)[] = [
+      this.telegramChannel,
+      this.discordChannel,
+      this.zaloChannel,
+      this.slackChannel,
+    ];
+    for (const channel of channels) {
+      if (channel) this.channelsService.registerChannel(channel);
+    }
 
     await this.hooksService.emitInternal(InternalHookEvent.AGENT_BOOTSTRAP, {
       context: { phase: 'init' },

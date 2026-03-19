@@ -6,6 +6,7 @@ import { SkillsModule } from './skills/skills.module';
 import { PipelineModule } from './pipeline/pipeline.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { LearningModule } from './learning/learning.module';
+import { GlobalConfigModule } from '../modules/global-config/global-config.module';
 import { AgentService } from './agent.service';
 import { AgentController } from './agent.controller';
 
@@ -32,6 +33,7 @@ import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
     PipelineModule,
     SchedulerModule,
     LearningModule,
+    GlobalConfigModule,
   ],
   controllers: [AgentController],
   providers: [

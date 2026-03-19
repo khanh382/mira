@@ -26,21 +26,30 @@ export class ZaloChannel implements IChannelAdapter {
     maxMessageLength: 2000,
   };
 
-  private botToken: string | null = null;
+  private activeBots = new Map<string, string>();
 
   async initialize(config: Record<string, unknown>): Promise<void> {
-    this.logger.log('Zalo channel initialized');
+    this.logger.log(
+      `Zalo channel initialized (${this.activeBots.size} bots active)`,
+    );
   }
 
   async shutdown(): Promise<void> {
+    this.activeBots.clear();
     this.logger.log('Zalo channel shutdown');
   }
 
+  registerBot(botToken: string, ownerIdentifier: string): void {
+    this.activeBots.set(botToken, ownerIdentifier);
+  }
+
   async sendMessage(message: IOutboundMessage): Promise<void> {
-    this.logger.debug(`Sending message to ${message.targetId}`);
+    this.logger.debug(
+      `Outbound Zalo → ${message.targetId}: ${message.content.slice(0, 50)}...`,
+    );
   }
 
   isConfigured(): boolean {
-    return !!this.botToken;
+    return this.activeBots.size > 0;
   }
 }

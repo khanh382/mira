@@ -6,20 +6,16 @@ import {
   HttpCode,
   Param,
   Headers,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { BotAccessService } from '../../modules/bot-users/bot-access.service';
+import { BotDeliveryService } from '../../modules/bot-users/bot-delivery.service';
 import { BotPlatform } from '../../modules/bot-users/entities/bot-access-grant.entity';
 import { GatewayService } from '../gateway.service';
 import { ChatPlatform } from '../../modules/chat/entities/chat-thread.entity';
 
-/**
- * Discord Interaction Endpoint.
- *
- * Security model (giống Telegram):
- * - botToken trong URL là secret per-user (chỉ Discord và owner biết)
- * - BotAccessService.checkAccess() đối chiếu senderId với owner's discord_id
- * - bot_access_grants cho phép cấp quyền cho người khác (qua verification code)
- */
 @Controller('webhooks/discord')
 export class DiscordWebhookController {
   private readonly logger = new Logger(DiscordWebhookController.name);
@@ -27,6 +23,8 @@ export class DiscordWebhookController {
   constructor(
     private readonly botAccessService: BotAccessService,
     private readonly gatewayService: GatewayService,
+    private readonly deliveryService: BotDeliveryService,
+    private readonly configService: ConfigService,
   ) {}
 
   @Post(':botToken')
@@ -34,8 +32,9 @@ export class DiscordWebhookController {
   async handleInteractionWithToken(
     @Param('botToken') botToken: string,
     @Body() interaction: any,
+    @Res() res: Response,
   ) {
-    return this.handleCore(botToken, interaction);
+    return this.handleCore(botToken, interaction, res);
   }
 
   @Post()
@@ -43,20 +42,24 @@ export class DiscordWebhookController {
   async handleInteraction(
     @Body() interaction: any,
     @Headers() headers: Record<string, string>,
+    @Res() res: Response,
   ) {
     const botToken = this.resolveBotToken(undefined, headers, interaction);
-    return this.handleCore(botToken, interaction);
+    return this.handleCore(botToken, interaction, res);
   }
 
-  private async handleCore(botToken: string | null, interaction: any) {
-    // Discord PING verification (type 1) — required for Discord to accept the endpoint
+  private async handleCore(
+    botToken: string | null,
+    interaction: any,
+    res: Response,
+  ) {
     if (interaction?.type === 1) {
-      return { type: 1 };
+      return res.json({ type: 1 });
     }
 
     if (!botToken) {
       this.logger.warn('Discord webhook missing bot token');
-      return { ok: true, denied: true };
+      return res.json({ ok: true, denied: true });
     }
 
     const discordUserId = this.extractDiscordUserId(interaction);
@@ -66,7 +69,7 @@ export class DiscordWebhookController {
       this.logger.debug(
         `Discord interaction ignored: missing sender/content (type=${interaction?.type})`,
       );
-      return { ok: true };
+      return res.json({ ok: true });
     }
 
     if (/^[A-Fa-f0-9]{6}$/.test(content.trim())) {
@@ -77,7 +80,10 @@ export class DiscordWebhookController {
         content.trim(),
       );
       if (verified) {
-        return { ok: true, verified: true };
+        return res.json({
+          type: 4,
+          data: { content: '✅ Xác thực thành công! Bạn đã được cấp quyền truy cập bot.' },
+        });
       }
     }
 
@@ -92,18 +98,65 @@ export class DiscordWebhookController {
       this.logger.warn(
         `Access denied for discord user ${discordUserId} on bot ${botUser?.id}`,
       );
-      return { ok: true, denied: true };
+      return res.json({ ok: true, denied: true });
     }
 
-    await this.gatewayService.handleMessage(ownerUid, content, {
-      channelId: 'discord',
-      platform: ChatPlatform.DISCORD,
-    });
+    const interactionId = interaction?.id;
+    const interactionToken = interaction?.token;
+    const applicationId =
+      interaction?.application_id ||
+      this.configService.get<string>('DISCORD_APPLICATION_ID');
 
-    this.logger.debug(
-      `Discord interaction routed: user=${discordUserId}, owner=${ownerUid}`,
-    );
-    return { ok: true };
+    if (interactionToken && applicationId) {
+      res.json({ type: 5 });
+
+      try {
+        const result = await this.gatewayService.handleMessage(ownerUid, content, {
+          channelId: 'discord',
+          platform: ChatPlatform.DISCORD,
+        });
+
+        if (result.response) {
+          await this.deliveryService.sendDiscordFollowup(
+            applicationId,
+            interactionToken,
+            result.response,
+          );
+        }
+      } catch (err) {
+        this.logger.error(`Discord pipeline error: ${err.message}`);
+        await this.deliveryService.sendDiscordFollowup(
+          applicationId,
+          interactionToken,
+          '❌ Đã xảy ra lỗi khi xử lý yêu cầu.',
+        );
+      }
+    } else {
+      const channelId = interaction?.channel_id || interaction?.channel?.id;
+      const stopTyping =
+        channelId
+          ? this.deliveryService.startDiscordTypingLoop(botToken, channelId)
+          : () => {};
+
+      try {
+        const result = await this.gatewayService.handleMessage(ownerUid, content, {
+          channelId: 'discord',
+          platform: ChatPlatform.DISCORD,
+        });
+
+        if (result.response && channelId) {
+          await this.deliveryService.sendDiscordChannel(
+            botToken,
+            channelId,
+            result.response,
+          );
+        }
+      } finally {
+        stopTyping();
+      }
+
+      return res.json({ ok: true });
+    }
   }
 
   private resolveBotToken(
