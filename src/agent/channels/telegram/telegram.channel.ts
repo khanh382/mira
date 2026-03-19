@@ -1,0 +1,49 @@
+import { Injectable, Logger } from '@nestjs/common';
+import {
+  IChannelAdapter,
+  IChannelCapabilities,
+  IChannelMeta,
+  IInboundMessage,
+  IOutboundMessage,
+} from '../interfaces/channel.interface';
+
+@Injectable()
+export class TelegramChannel implements IChannelAdapter {
+  private readonly logger = new Logger(TelegramChannel.name);
+
+  readonly meta: IChannelMeta = {
+    id: 'telegram',
+    name: 'Telegram',
+    description: 'Telegram Bot channel adapter',
+  };
+
+  readonly capabilities: IChannelCapabilities = {
+    supportsMedia: true,
+    supportsGroups: true,
+    supportsThreads: true,
+    supportsReactions: true,
+    supportsStreaming: false,
+    supportsVoice: true,
+    maxMessageLength: 4096,
+  };
+
+  private botToken: string | null = null;
+
+  async initialize(config: Record<string, unknown>): Promise<void> {
+    // TODO: Initialize Telegram bot with token from BotUser
+    this.logger.log('Telegram channel initialized');
+  }
+
+  async shutdown(): Promise<void> {
+    this.logger.log('Telegram channel shutdown');
+  }
+
+  async sendMessage(message: IOutboundMessage): Promise<void> {
+    // TODO: Send message via Telegram Bot API
+    this.logger.debug(`Sending message to ${message.targetId}`);
+  }
+
+  isConfigured(): boolean {
+    return !!this.botToken;
+  }
+}
