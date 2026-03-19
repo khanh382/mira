@@ -8,6 +8,7 @@ import {
   SkillCategory,
   SkillType,
 } from '../../interfaces/skill-runner.interface';
+import { ModelTier } from '../../../pipeline/model-router/model-tier.enum';
 
 const PARAMETERS_SCHEMA = {
   type: 'object',
@@ -38,6 +39,7 @@ const PARAMETERS_SCHEMA = {
     'Use when the user sends an image and wants it described, analyzed, or has questions about it.',
   category: SkillCategory.MEDIA,
   parametersSchema: PARAMETERS_SCHEMA,
+  minModelTier: ModelTier.SKILL,
 })
 @Injectable()
 export class ImageUnderstandSkill implements ISkillRunner {
@@ -51,6 +53,7 @@ export class ImageUnderstandSkill implements ISkillRunner {
       category: SkillCategory.MEDIA,
       type: SkillType.CODE,
       parametersSchema: PARAMETERS_SCHEMA,
+      minModelTier: ModelTier.SKILL,
     };
   }
 
@@ -71,7 +74,9 @@ export class ImageUnderstandSkill implements ISkillRunner {
     }
 
     // TODO: Send to vision-capable LLM (GPT-4o, Claude, Gemini) via ProvidersService
-    // This requires injecting ProvidersService and building a multimodal message
+    // ModelRouter đã đảm bảo context sẽ dùng model SKILL tier (vision-capable)
+    // Khi implement: inject ProvidersService + ModelRouterService,
+    // gọi modelRouter.resolveModel(userId, TOOL_CALL) để lấy vision model
     return {
       success: false,
       error: 'Image understanding requires a vision-capable LLM provider to be configured',

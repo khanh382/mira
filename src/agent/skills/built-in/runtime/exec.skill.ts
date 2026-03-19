@@ -10,6 +10,7 @@ import {
   SkillCategory,
   SkillType,
 } from '../../interfaces/skill-runner.interface';
+import { ModelTier } from '../../../pipeline/model-router/model-tier.enum';
 
 const execFileAsync = promisify(execFile);
 
@@ -39,6 +40,7 @@ const PARAMETERS_SCHEMA = {
   category: SkillCategory.RUNTIME,
   parametersSchema: PARAMETERS_SCHEMA,
   ownerOnly: true,
+  minModelTier: ModelTier.SKILL,
 })
 @Injectable()
 export class ExecSkill implements ISkillRunner {
@@ -53,6 +55,7 @@ export class ExecSkill implements ISkillRunner {
       type: SkillType.CODE,
       parametersSchema: PARAMETERS_SCHEMA,
       ownerOnly: true,
+      minModelTier: ModelTier.SKILL,
     };
   }
 

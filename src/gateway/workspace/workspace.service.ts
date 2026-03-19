@@ -202,7 +202,7 @@ export class WorkspaceService implements OnModuleInit {
 
   /**
    * Load toàn bộ context cho agent session:
-   * SOUL + USER + AGENTS + MEMORY + daily memory
+   * SOUL + USER + AGENTS + MEMORY + daily memory + Google Drive state
    */
   buildAgentSystemContext(identifier: string): string {
     const parts: string[] = [];
@@ -221,6 +221,12 @@ export class WorkspaceService implements OnModuleInit {
 
     const daily = this.readDailyMemory(identifier);
     if (daily) parts.push(`## Today's Notes\n${daily}`);
+
+    const drive = this.readWorkspaceFile(identifier, 'GOOGLE_DRIVE.md');
+    if (drive) {
+      const readable = drive.replace(/<!--[\s\S]*?-->/g, '').trim();
+      if (readable) parts.push(readable);
+    }
 
     return parts.join('\n\n---\n\n');
   }

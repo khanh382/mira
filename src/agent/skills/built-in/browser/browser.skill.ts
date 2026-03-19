@@ -8,6 +8,7 @@ import {
   SkillCategory,
   SkillType,
 } from '../../interfaces/skill-runner.interface';
+import { ModelTier } from '../../../pipeline/model-router/model-tier.enum';
 
 const PARAMETERS_SCHEMA = {
   type: 'object',
@@ -48,6 +49,7 @@ const PARAMETERS_SCHEMA = {
   category: SkillCategory.BROWSER,
   parametersSchema: PARAMETERS_SCHEMA,
   ownerOnly: true,
+  minModelTier: ModelTier.SKILL,
 })
 @Injectable()
 export class BrowserSkill implements ISkillRunner {
@@ -64,6 +66,7 @@ export class BrowserSkill implements ISkillRunner {
       type: SkillType.CODE,
       parametersSchema: PARAMETERS_SCHEMA,
       ownerOnly: true,
+      minModelTier: ModelTier.SKILL,
     };
   }
 

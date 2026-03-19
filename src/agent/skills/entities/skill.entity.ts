@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { ModelTier } from '../../pipeline/model-router/model-tier.enum';
 
 @Entity('skills_registry')
 export class Skill {
@@ -25,6 +26,14 @@ export class Skill {
 
   @Column({ name: 'parameters_schema', type: 'json', nullable: true })
   parametersSchema: Record<string, any>;
+
+  @Column({
+    name: 'min_model_tier',
+    type: 'enum',
+    enum: ModelTier,
+    default: ModelTier.CHEAP,
+  })
+  minModelTier: ModelTier;
 
   @Column({ name: 'is_active', default: true })
   isActive: boolean;

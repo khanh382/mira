@@ -4,7 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { GatewayService } from './gateway.service';
 import { GatewayController } from './gateway.controller';
-import { WorkspaceService } from './workspace/workspace.service';
+import { WorkspaceModule } from './workspace/workspace.module';
 import { ThreadResolverService } from './session-resolver/session-resolver.service';
 
 import { TelegramWebhookController } from './webhooks/telegram-webhook.controller';
@@ -34,6 +34,7 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
     BotUsersModule,
     ChatModule,
     AgentModule,
+    WorkspaceModule,
   ],
   controllers: [
     GatewayController,
@@ -43,10 +44,9 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
   ],
   providers: [
     GatewayService,
-    WorkspaceService,
     ThreadResolverService,
   ],
-  exports: [GatewayService, WorkspaceService],
+  exports: [GatewayService, WorkspaceModule],
 })
 export class GatewayModule implements OnModuleInit {
   constructor(

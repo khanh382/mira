@@ -1,5 +1,6 @@
 import { SetMetadata } from '@nestjs/common';
 import { SkillCategory, SkillType } from '../interfaces/skill-runner.interface';
+import { ModelTier } from '../../pipeline/model-router/model-tier.enum';
 
 export const SKILL_METADATA = 'SKILL_METADATA';
 
@@ -10,6 +11,8 @@ export interface SkillMetadata {
   category: SkillCategory;
   parametersSchema?: Record<string, unknown>;
   ownerOnly?: boolean;
+  /** Model tier tối thiểu để gọi skill này (default: CHEAP) */
+  minModelTier?: ModelTier;
 }
 
 /**

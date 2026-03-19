@@ -12,6 +12,7 @@
 - [Heart — Per-User Workspace](#heart--per-user-workspace)
 - [Cấu trúc thư mục](#cấu-trúc-thư-mục)
 - [Luồng xử lý chính (Pipeline)](#luồng-xử-lý-chính-pipeline)
+- [Smart Model Router](#smart-model-router)
 - [Hệ thống Hooks](#hệ-thống-hooks)
   - [Internal Hooks](#1-internal-hooks)
   - [Plugin Hooks](#2-plugin-hooks)
@@ -25,6 +26,8 @@
 - [Channels (Kênh giao tiếp)](#channels-kênh-giao-tiếp)
 - [LLM Providers](#llm-providers)
 - [Database Schema](#database-schema)
+- [Scheduler & Heartbeat](#scheduler--heartbeat)
+- [Learning — Vectorization & Fine-Tune Export](#learning--vectorization--fine-tune-export)
 - [Mở rộng](#mở-rộng)
 
 ---
@@ -47,10 +50,20 @@
 │                    └───────┬────────┘                            │
 │           ┌────────────────┼─────────────────┐                  │
 │     ┌─────▼─────┐  ┌──────▼──────┐  ┌───────▼───────┐         │
-│     │   Hooks   │  │ LLM Provider│  │    Skills     │         │
-│     │  System   │  │  (routing)  │  │ (13 code +    │         │
-│     │           │  │             │  │  ClawhHub)    │         │
-│     └───────────┘  └─────────────┘  └───────────────┘         │
+│     │   Hooks   │  │Smart Model  │  │    Skills     │         │
+│     │  System   │  │  Router     │  │ (14 code +    │         │
+│     │           │  │ (4 tiers)   │  │  ClawhHub)    │         │
+│     └───────────┘  └──────┬──────┘  └───────────────┘         │
+│                     ┌──────▼──────┐                            │
+│                     │ LLM Provider│                            │
+│                     │ (5 engines) │                            │
+│                     └─────────────┘                            │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Learning (Cronjob 3h sáng UTC+7)                        │   │
+│  │  VectorizationService → _vectors/   (RAG)                │   │
+│  │  ExportService        → _exports/   (Fine-tune)          │   │
+│  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  Database (PostgreSQL + TypeORM)                          │   │
@@ -214,6 +227,7 @@ heart/
 │   │   ├── TOOLS.md
 │   │   ├── HEARTBEAT.md
 │   │   ├── MEMORY.md                ← Long-term memory
+│   │   ├── GOOGLE_DRIVE.md          ← Auto-tracked Google resources
 │   │   └── memory/
 │   │       └── 2026-03-19.md
 │   ├── sessions/                    ← Chat history JSONL per thread
@@ -351,12 +365,18 @@ backend/src/
     │   │   │   └── tts.skill.ts
     │   │   ├── memory/
     │   │   │   ├── memory-search.skill.ts
-    │   │   │   └── memory-get.skill.ts
+    │   │   │   ├── memory-get.skill.ts
+    │   │   │   └── memory-write.skill.ts   # Ghi MEMORY.md, daily, workspace files
     │   │   ├── messaging/
     │   │   │   └── message-send.skill.ts
-    │   │   └── sessions/
-    │   │       ├── sessions-list.skill.ts   # threads_list
-    │   │       └── sessions-history.skill.ts # thread_history
+    │   │   ├── sessions/
+    │   │   │   ├── sessions-list.skill.ts   # threads_list
+    │   │   │   └── sessions-history.skill.ts # thread_history
+    │   │   └── google/
+    │   │       ├── google.module.ts
+    │   │       ├── gog-cli.service.ts       # CLI wrapper per-user
+    │   │       ├── google-workspace.skill.ts # 15 skill: Google Workspace
+    │   │       └── drive-tracker.service.ts  # Auto-track → GOOGLE_DRIVE.md
     │   │
     │   └── clawhub/
     │       ├── interfaces/clawhub-skill.interface.ts
@@ -367,12 +387,41 @@ backend/src/
         ├── interfaces/pipeline-context.interface.ts
         ├── pipeline.service.ts
         ├── pipeline.module.ts
+        ├── model-router/
+        │   ├── model-tier.enum.ts          # ModelTier, IntentType, MODEL_PRIORITY
+        │   ├── model-router.service.ts     # Smart routing logic (4 bước)
+        │   └── model-router.module.ts
         └── steps/
             ├── receive.step.ts
             ├── preprocess.step.ts
-            ├── route.step.ts
-            ├── agent-run.step.ts
+            ├── route.step.ts               # Tích hợp ModelRouterService
+            ├── agent-run.step.ts           # Mid-pipeline model switching
             └── deliver.step.ts
+    │
+    ├── scheduler/
+    │   ├── entities/scheduled-task.entity.ts
+    │   ├── scheduled-tasks.service.ts      # Retry policy + circuit breaker
+    │   ├── heartbeat.service.ts            # Parse HEARTBEAT.md → cron tasks
+    │   └── scheduler.module.ts
+    │
+    └── learning/
+        ├── vectorization.service.ts        # Cronjob 3h sáng: embed → vectors
+        ├── export.service.ts               # Cronjob 3h sáng: xuất .jsonl fine-tune
+        └── learning.module.ts
+
+heart/                                      # BRAIN_DIR (per-user workspace)
+├── _vectors/                               # Vector embeddings (per userId)
+│   ├── 1/                                  # userId = 1
+│   │   ├── <msg_id>.json                   # { vector, content, role, ... }
+│   │   └── ...
+│   └── 2/
+├── _exports/                               # Fine-tune .jsonl (per userId)
+│   ├── 1/
+│   │   ├── 2026-03-19.jsonl               # Raw messages + training pairs
+│   │   └── ...
+│   └── 2/
+├── _shared/                                # Shared workspace files
+└── <identifier>/                           # Per-user workspace
 ```
 
 ---
@@ -404,6 +453,8 @@ backend/src/
                           ▼
   ┌─────────────────────────────────────────────────────────┐
   │ Step 2: PREPROCESS                                      │
+  │   • ★ Load system context (SOUL, USER, AGENTS, MEMORY) │
+  │   • ★ Load 15 tin nhắn gần nhất từ DB → history        │
   │   • Audio transcription, image description              │
   │   • 🔔 Internal: message.transcribed                    │
   │   • 🔔 Plugin:   BEFORE_PROMPT_BUILD (modifiable)       │
@@ -411,19 +462,32 @@ backend/src/
   └───────────────────────┬─────────────────────────────────┘
                           ▼
   ┌─────────────────────────────────────────────────────────┐
-  │ Step 3: ROUTE                                           │
-  │   • Chọn LLM model                                     │
+  │ Step 3: ROUTE (Smart Model Router)                      │
+  │   • Heuristic intent classification (không gọi LLM)    │
+  │   • Resolve minModelTier từ active skills               │
+  │   • User level gate (Owner/Colleague/Client)            │
+  │   • Fallback chain nếu provider unavailable             │
   │   • 🔔 Plugin:   BEFORE_MODEL_RESOLVE (modifiable)      │
   └───────────────────────┬─────────────────────────────────┘
                           ▼
   ┌─────────────────────────────────────────────────────────┐
-  │ Step 4: AGENT RUN                                       │
+  │ Step 4: AGENT RUN (Multi-Model Agent Loop)              │
   │   • 🔔 Plugin: BEFORE_AGENT_START, SESSION_START        │
-  │   • ┌─── Agent Loop ────────────────────────────┐       │
-  │   │ │  LLM call (via ProvidersService)          │       │
-  │   │ │  🔔 Plugin: LLM_INPUT → LLM_OUTPUT        │       │
-  │   │ │  If tool_calls → execute skill → loop     │       │
-  │   │ └───────────────────────────────────────────┘       │
+  │   • ┌─── Agent Loop (max 15 iterations) ──────────┐    │
+  │   │ │ 1. 🔔 LLM_INPUT hook                        │    │
+  │   │ │ 2. Call LLM (with auto-retry on error)      │    │
+  │   │ │ 3. 🔔 LLM_OUTPUT hook                       │    │
+  │   │ │ 4. If no tool_calls → return final response  │    │
+  │   │ │ 5. For each tool_call:                       │    │
+  │   │ │    🔔 BEFORE_TOOL_CALL → execute skill       │    │
+  │   │ │ 6. 🔔 AFTER_TOOL_CALL                        │    │
+  │   │ │ 7. ★ Mid-loop model switch:                  │    │
+  │   │ │    • Big data (>50K) → PROCESSOR (Gemini)    │    │
+  │   │ │    • After processing → back to SKILL        │    │
+  │   │ │    • Iteration ≥8 → EXPERT (DeepSeek-R1)    │    │
+  │   │ │ 8. Loop back to step 1                       │    │
+  │   │ └──────────────────────────────────────────────┘    │
+  │   • On error: auto-fallback to different model          │
   │   • 🔔 Plugin: AGENT_END, SESSION_END                   │
   └───────────────────────┬─────────────────────────────────┘
                           ▼
@@ -437,6 +501,115 @@ backend/src/
 ```
 
 **Pipeline context** dùng `threadId` (UUID) thay vì `sessionId` (integer).
+
+---
+
+## Smart Model Router
+
+Hệ thống định tuyến model thông minh — tự động chọn LLM phù hợp theo tác vụ, tiết kiệm chi phí.
+
+### Nhóm Model (ModelTier)
+
+| Tier | Tên gọi | Models ưu tiên | Đặc điểm |
+|------|---------|-----------------|-----------|
+| `cheap` | The Grunt | DeepSeek-V3 → Gemini 1.5 Flash → GPT-4o-mini | Phân loại intent, chào hỏi, câu hỏi ngắn |
+| `skill` | The Artisan | Claude 3.5 Sonnet → GPT-4o → DeepSeek-V3 | Gọi Tool, GOG CLI, Playwright, viết code |
+| `processor` | The Processor | Gemini 1.5 Flash → Gemini 1.5 Pro → DeepSeek-V3 | Xử lý dữ liệu lớn (1M+ context) |
+| `expert` | The Architect | DeepSeek-R1 → GPT-4o → Claude 3.5 Sonnet | Suy luận đa bước, lập kế hoạch phức tạp |
+
+### Luồng Routing 4 Bước
+
+```
+  User Message
+       │
+       ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Bước 1: TRIAGE (Heuristic — không gọi LLM)                 │
+  │   • Phân loại intent: smalltalk / tool_call / big_data /    │
+  │     reasoning                                                │
+  │   • Dựa vào keyword matching + message length               │
+  └────────────────────────┬────────────────────────────────────┘
+                           ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Bước 2: SKILL TIER CHECK                                    │
+  │   • Nếu active skills yêu cầu min_model_tier > intent tier  │
+  │   • → Upgrade lên tier cao hơn                               │
+  │   • Ví dụ: intent=smalltalk nhưng active skill=browser      │
+  │     → tier upgrade từ CHEAP lên SKILL                        │
+  └────────────────────────┬────────────────────────────────────┘
+                           ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Bước 3: USER LEVEL GATE                                     │
+  │   • Owner:     Mặc định SKILL cho mọi thứ, EXPERT khi      │
+  │                cần reasoning                                 │
+  │   • Colleague:  Theo routing tiết kiệm, EXPERT khi cần     │
+  │   • Client:    Theo routing tiết kiệm, chặn EXPERT →       │
+  │                downgrade về SKILL                             │
+  └────────────────────────┬────────────────────────────────────┘
+                           ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Bước 4: FALLBACK CHAIN                                      │
+  │   • Duyệt models trong tier theo thứ tự ưu tiên             │
+  │   • Nếu provider không có API key → skip                    │
+  │   • Nếu không model nào available → thử qua OpenRouter      │
+  │   • Emergency: tìm BẤT KỲ model nào có key                  │
+  │   • Cuối cùng: dùng DEFAULT_MODEL từ .env                   │
+  └─────────────────────────────────────────────────────────────┘
+```
+
+### Mid-Pipeline Model Switching
+
+Trong `AgentRunStep`, model có thể tự động đổi giữa pipeline:
+
+| Tình huống | Model chuyển sang |
+|------------|-------------------|
+| Tool trả về >50K chars dữ liệu | → PROCESSOR (Gemini Flash) |
+| Kết quả mâu thuẫn / cần reasoning | → EXPERT (DeepSeek-R1) |
+| Model lỗi kết nối (timeout, 429, 503) | → Fallback model khác trong tier |
+
+### Tích hợp vào Database
+
+Bảng `skills_registry` có thêm cột `min_model_tier`:
+
+```sql
+ALTER TABLE skills_registry
+ADD COLUMN min_model_tier VARCHAR(20) DEFAULT 'cheap';
+-- Giá trị: 'cheap', 'skill', 'processor', 'expert'
+```
+
+Ví dụ cấu hình:
+
+| Skill | min_model_tier | Lý do |
+|-------|---------------|-------|
+| `web_search` | `cheap` | Chỉ cần gọi API, không cần model mạnh |
+| `browser`, `exec`, `google_workspace` | `skill` | Cần Claude Sonnet để tránh lỗi logic |
+| `cron_manage`, `message_send` | `skill` | Gửi nhầm message/email = nguy hiểm |
+| Skill "Phân tích tài chính" (custom) | `expert` | Cần reasoning đa bước |
+
+### Cost Control theo User Level
+
+```
+Owner (Kim)      → SKILL tier mặc định cho mọi thứ
+                 → EXPERT khi cần reasoning phức tạp
+                 → CHEAP chỉ cho smalltalk
+
+Colleague        → CHEAP mặc định
+                 → Auto-upgrade khi skill yêu cầu
+                 → EXPERT khi cần (được phép)
+
+Client           → CHEAP mặc định
+                 → Auto-upgrade khi skill yêu cầu
+                 → EXPERT bị chặn → downgrade về SKILL
+```
+
+### Files
+
+```
+src/agent/pipeline/model-router/
+├── model-tier.enum.ts         # ModelTier, IntentType, MODEL_PRIORITY
+├── model-router.service.ts    # Smart routing logic
+└── model-router.module.ts     # NestJS module
+```
 
 ---
 
@@ -583,9 +756,213 @@ Load từ 3 nguồn (priority thấp → cao):
 | 8 | `tts` | `media` | Text → Speech audio | OpenAI TTS API |
 | 9 | `memory_search` | `memory` | Tìm kiếm ngữ nghĩa | Vector DB |
 | 10 | `memory_get` | `memory` | Đọc file memory | filesystem |
-| 11 | `message_send` | `messaging` | Gửi tin nhắn qua channel | ChannelsService |
-| 12 | `threads_list` | `sessions` | Liệt kê chat threads | ThreadsService |
-| 13 | `thread_history` | `sessions` | Lấy lịch sử chat thread | ChatService |
+| 11 | `memory_write` | `memory` | Ghi/append vào MEMORY.md, daily memory, workspace files | filesystem |
+| 12 | `message_send` | `messaging` | Gửi tin nhắn qua channel | ChannelsService |
+| 13 | `threads_list` | `sessions` | Liệt kê chat threads | ThreadsService |
+| 14 | `thread_history` | `sessions` | Lấy lịch sử chat thread | ChatService |
+| 15 | `google_workspace` | `google` | Gmail, Calendar, Drive, Sheets, Docs, Tasks... | [gogcli](https://github.com/steipete/gogcli) |
+
+### Google Workspace Skill (gogcli)
+
+Tích hợp Google Workspace thông qua binary CLI [gogcli](https://github.com/steipete/gogcli). Mỗi user có tài khoản Google riêng biệt, xử lý song song.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  LLM function call: google_workspace                      │
+│  { service: "sheets", action: "get <id> A1:B10" }       │
+└──────────────────────┬───────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────┐
+│  GoogleWorkspaceSkill                                     │
+│    → GogCliService.exec({userId, args, json: true})      │
+└──────────────────────┬───────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────┐
+│  gog --client user_<uid> --account <email> --json        │
+│      sheets get <spreadsheetId> 'Sheet1!A1:B10'          │
+│                                                           │
+│  Auth: encrypted file keyring (per-user credentials)     │
+│  Isolation: --client user_<uid> → token bucket riêng     │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Per-user isolation:**
+
+| Concept | Cách xử lý |
+|---------|------------|
+| Credentials | `bot_users.bu_google_console_cloud_json_path` — mỗi user trỏ tới file OAuth JSON riêng |
+| Token bucket | `--client user_<uid>` — gogcli isolate refresh token per client name |
+| Account | `--account <email>` — Google account email của user |
+| Song song | Async `child_process.execFile()` — User1 và User2 chạy gog đồng thời, không block |
+
+**Ví dụ sử dụng tự nhiên (LLM gọi):**
+
+```
+User: "Tạo báo cáo doanh thu tháng 3 trên Google Sheets"
+→ google_workspace(service: "sheets", action: "create 'Báo cáo T3'")
+→ google_workspace(service: "sheets", action: "update <newId> A1 'Ngày|Doanh thu|Ghi chú'")
+
+User: "Gửi email cho team về cuộc họp ngày mai"
+→ google_workspace(service: "calendar", action: "events primary --tomorrow")
+→ google_workspace(service: "gmail", action: "send --to team@company.com --subject 'Lịch họp ngày mai' --body '...'")
+
+User: "Đọc file báo cáo mới nhất trên Drive"
+→ google_workspace(service: "drive", action: "search 'báo cáo' --max 5")
+→ google_workspace(service: "docs", action: "cat <docId>")
+```
+
+**Auto-install gogcli:**
+
+Khi backend start, `GogCliService.onModuleInit()` tự kiểm tra và cài đặt:
+
+1. Kiểm tra `gog` trong PATH (hoặc `GOG_BIN` env)
+2. Kiểm tra local build tại `.gogcli/bin/gog`
+3. Nếu chưa có → thử `brew install gogcli`
+4. Nếu brew không có → `git clone` + `make` vào `.gogcli/`
+5. Không cài được → log warning, skill trả lỗi rõ ràng
+
+Yêu cầu tối thiểu: `git` + `go` (để build from source) hoặc `brew`.
+
+**Setup per-user:**
+
+1. Admin tạo OAuth Desktop client trên Google Cloud Console
+2. Lưu JSON file path vào `bot_users.bu_google_console_cloud_json_path`
+3. Chạy setup credentials: `gog --client user_<uid> auth credentials <path>`
+4. Auth user: `gog --client user_<uid> auth add <email> --services user`
+5. Lưu email vào env `GOG_ACCOUNT_USER_<uid>=<email>`
+
+**Files:**
+
+| File | Vai trò |
+|------|---------|
+| `src/agent/skills/built-in/google/gog-cli.service.ts` | CLI wrapper, per-user auth, exec isolation |
+| `src/agent/skills/built-in/google/google-workspace.skill.ts` | Skill entry point, args builder, auto-tracking |
+| `src/agent/skills/built-in/google/drive-tracker.service.ts` | Auto-track create/update/delete → GOOGLE_DRIVE.md |
+| `src/agent/skills/built-in/google/google.module.ts` | Module wiring (imports BotUsersModule, UsersModule, WorkspaceModule) |
+
+### Drive Tracker — Auto-tracking Google Resources
+
+Mỗi khi `google_workspace` skill thực thi thành công một thao tác tạo/sửa/xóa,
+`DriveTrackerService` tự động cập nhật file `GOOGLE_DRIVE.md` trong workspace user.
+
+```
+google_workspace.execute() → success
+    │
+    ▼ DriveTrackerService.trackOperation(userId, service, action, result)
+    │
+    ├── detectOperation() → create | update | delete | rename
+    │
+    ├── loadState() ← đọc GOOGLE_DRIVE.md (JSON ẩn trong HTML comment)
+    │
+    ├── handleCreate/Update/Delete/Rename → cập nhật state
+    │
+    └── saveState() → ghi GOOGLE_DRIVE.md (Markdown đọc được + JSON backup)
+```
+
+**Tự động detect các thao tác:**
+
+| Service | Verb | Tracked |
+|---------|------|---------|
+| `sheets` | `create`, `update`, `append`, `delete` | Spreadsheet ID, name, sheets list |
+| `docs` | `create`, `delete` | Document ID, name |
+| `slides` | `create`, `delete` | Presentation ID, name |
+| `drive` | `mkdir`, `upload`, `rm`, `trash`, `rename`, `mv` | Folder/File ID, name, parent |
+
+**Ví dụ GOOGLE_DRIVE.md tự động sinh:**
+
+```markdown
+# Google Drive — Tracked Resources
+
+## Spreadsheets (2)
+
+- **Báo cáo hôm nay** `1BxiMVs...` — [Open](https://docs.google.com/spreadsheets/d/1BxiMVs...)
+  - Sheets: Sheet1, Tuần 12
+  - Updated: 2026-03-19 10:30
+
+- **Doanh thu T3** `2CyNWt...` — [Open](https://docs.google.com/spreadsheets/d/2CyNWt...)
+  - Sheets: Tổng hợp
+  - Updated: 2026-03-18 15:00
+
+## Folders (1)
+
+- **Báo cáo 2026** `3DzOXu...`
+  - Updated: 2026-03-17 09:00
+
+## Deleted (1)
+
+> These items have been deleted. Do not reference them.
+
+- ~~Bản nháp~~ `4EaPYv...` (spreadsheet) — deleted 2026-03-18 14:00
+```
+
+**Tích hợp vào System Context:**
+
+`buildAgentSystemContext()` tự động đọc `GOOGLE_DRIVE.md` (bỏ JSON ẩn) → agent luôn biết:
+- Spreadsheet nào đang tồn tại (có ID, tên, danh sách sheets)
+- Folder nào đã tạo
+- File nào đã xóa (tránh gọi nhầm)
+
+### Memory Write Skill & Conversation Context
+
+Agent có khả năng **ghi nhớ** thông tin quan trọng qua 2 cơ chế:
+
+**1. Tự động — PreprocessStep load context mỗi lượt chat:**
+
+```
+PreprocessStep.execute(context)
+    │
+    ├── loadSystemContext()
+    │   └── UsersService.findById(userId) → identifier
+    │   └── WorkspaceService.buildAgentSystemContext(identifier)
+    │       → SOUL.md + USER.md + AGENTS.md + MEMORY.md + daily memory
+    │       → inject làm system message đầu tiên
+    │
+    └── loadConversationHistory()
+        └── ChatService.getRecentMessages(threadId, 15)
+            → 15 tin nhắn gần nhất (user + assistant)
+            → append vào conversationHistory
+```
+
+Kết quả `conversationHistory` gửi cho LLM:
+```
+[system: SOUL + USER + AGENTS + MEMORY + daily]
+[user: "tin nhắn cũ 1"]
+[assistant: "trả lời cũ 1"]
+[user: "tin nhắn cũ 2"]
+[assistant: "trả lời cũ 2"]
+...
+[user: "tin nhắn hiện tại"]    ← append ở AgentRunStep
+```
+
+**2. Chủ động — Agent gọi `memory_write` skill:**
+
+| Action | Mô tả | File đích |
+|--------|--------|----------|
+| `append_memory` | Append vào long-term memory (có timestamp) | `MEMORY.md` |
+| `write_memory` | Ghi đè toàn bộ MEMORY.md | `MEMORY.md` |
+| `append_daily` | Ghi note hôm nay (có giờ) | `memory/YYYY-MM-DD.md` |
+| `write_file` | Ghi file bất kỳ trong workspace | `<filename>` |
+| `append_file` | Append vào file bất kỳ | `<filename>` |
+
+**Ví dụ: User yêu cầu tạo Google Sheet và agent tự nhớ:**
+
+```
+User: "Tạo Google Sheet Báo cáo hôm nay"
+    │
+    ▼ Agent gọi google_workspace(sheets, "create 'Báo cáo hôm nay'")
+    │ → Kết quả: { spreadsheetId: "1BxiMVs..." }
+    │
+    ▼ Agent gọi memory_write(append_memory, "Google Sheet 'Báo cáo hôm nay': ID=1BxiMVs...")
+    │ → Lưu vào heart/<user>/workspace/MEMORY.md
+    │
+    ▼ Agent trả lời: "Đã tạo Sheet thành công!"
+
+User (lượt sau): "Thêm sheet mới tên 'Tuần 12' vào file báo cáo"
+    │
+    ▼ PreprocessStep load MEMORY.md → agent biết ID = 1BxiMVs...
+    │
+    ▼ Agent gọi google_workspace(sheets, "...")
+```
 
 ### Cách tạo Skill mới
 
@@ -707,6 +1084,280 @@ interface ILlmProvider {
 | `chat_messages.os_id` (FK → sessions) | `chat_messages.thread_id` (FK → threads) | Reference chat_threads |
 | — | `bot_access_grants` (bảng mới) | Access control per-bot |
 | `bot_users.google_workspace_token` | `bot_users.google_console_cloud_json_path` | Chính xác hơn |
+
+---
+
+## Scheduler & Heartbeat
+
+Hệ thống tác vụ tự động, kế thừa concept HEARTBEAT.md từ OpenClaw.
+
+### Kiến trúc
+
+```
+  HEARTBEAT.md (per-user)          Owner yêu cầu agent
+       │                                 │
+       ▼                                 ▼
+  HeartbeatService              cron_manage skill
+  (parse MD → tasks)            (add/remove/pause/resume)
+       │                                 │
+       └──────────┬──────────────────────┘
+                  ▼
+         ScheduledTasksService
+         ┌────────────────────────────────────────┐
+         │  Cho mỗi task:                          │
+         │  1. CronJob tick theo cronExpression     │
+         │  2. Concurrent lock (1 instance/task)    │
+         │  3. Gọi PipelineService.processMessage() │
+         │  4. Retry policy + circuit breaker       │
+         └────────────────────────────────────────┘
+                  │
+          ┌───────▼────────┐
+          │ Agent Pipeline  │
+          │ (Smart Router)  │
+          └────────────────┘
+```
+
+### Retry Policy & Circuit Breaker (Quy tắc chung)
+
+**Owner thiết lập trong bảng `config`** (hoặc qua `cron_manage` action `set_global_rules`):
+- `cof_scheduler_max_retries_per_tick` = 3 (số lần thử trong 1 lượt tick)
+- `cof_scheduler_max_consecutive_failed_ticks` = 3 (số lượt tick liên tiếp fail → tự đóng)
+
+**Áp dụng cho mọi user**, kể cả owner.
+
+```
+Lượt tick 1:
+  Thử lần 1 → FAIL
+  Thử lần 2 → FAIL
+  Thử lần 3 → FAIL
+  → Bỏ qua lượt này, chờ lượt tiếp theo. consecutiveFailures = 1
+
+Lượt tick 2:
+  Thử lần 1 → FAIL
+  Thử lần 2 → FAIL
+  Thử lần 3 → FAIL
+  → Bỏ qua lượt này. consecutiveFailures = 2
+
+Lượt tick 3:
+  Thử lần 1 → FAIL
+  Thử lần 2 → FAIL
+  Thử lần 3 → FAIL
+  → TỰ ĐÓNG TASK ⛔ (không chạy nữa cho đến khi owner resume)
+
+--- Owner resume ---
+
+Lượt tick 4:
+  Thử lần 1 → SUCCESS → consecutiveFailures = 0 ✅
+```
+
+**Safeguards chống tốn tài nguyên:**
+
+| Safeguard | Mô tả |
+|-----------|-------|
+| `maxRetriesPerTick` (config, default: 3) | Trong 1 lượt tick: thử tối đa N lần, fail hết → bỏ qua lượt |
+| `maxConsecutiveFailedTicks` (config, default: 3) | M lượt tick liên tiếp fail → tự đóng task |
+| `timeoutMs` (per-task, default: 120s) | Mỗi lần chạy tối đa 2 phút |
+| Concurrent lock | Nếu task đang chạy → skip tick hiện tại |
+| `maxModelTier` | Giới hạn tier tối đa (ví dụ: `cheap` cho task đơn giản) |
+| `allowedSkills` | Chỉ cho phép skill cụ thể (tránh agent "mò" skill đắt tiền) |
+| Smart Router | Tự chọn model rẻ nhất phù hợp |
+
+### HEARTBEAT.md Format
+
+File `heart/<user>/workspace/HEARTBEAT.md`:
+
+```markdown
+## Kiểm tra email mới
+- cron: 0 */1 * * *
+- prompt: Kiểm tra Gmail, nếu có email quan trọng thì báo qua Telegram
+- skills: google_workspace, message_send
+- retries: 3
+- tier: skill
+
+## Báo cáo hàng ngày
+- cron: 0 7 * * *
+- prompt: Tạo báo cáo tổng hợp email + calendar hôm nay trên Google Sheet
+- skills: google_workspace
+- retries: 2
+- timeout: 180000
+```
+
+HeartbeatService tự rescan mỗi 5 phút, tạo/cập nhật tasks từ file.
+
+### Owner thiết lập quy tắc chung
+
+Owner nói: _"Đặt quy tắc: mỗi lượt chỉ thử 3 lần, 3 lượt liên tiếp fail thì tự đóng"_
+
+Agent gọi `cron_manage`:
+```json
+{
+  "action": "set_global_rules",
+  "maxRetriesPerTick": 3,
+  "maxConsecutiveFailedTicks": 3
+}
+```
+
+Hoặc cập nhật trực tiếp bảng `config`:
+- `cof_scheduler_max_retries_per_tick`
+- `cof_scheduler_max_consecutive_failed_ticks`
+
+### Cách agent tạo cron job
+
+Owner nói: _"Mỗi ngày 7h sáng, tự động đăng bài lên Facebook"_
+
+Agent gọi `cron_manage`:
+```json
+{
+  "action": "add",
+  "taskCode": "daily_fb_post",
+  "name": "Đăng bài Facebook hàng ngày",
+  "cronExpression": "0 7 * * *",
+  "prompt": "Đăng bài lên Facebook cá nhân với nội dung phù hợp với ngày hôm nay",
+  "allowedSkills": ["browser", "image_understand"],
+  "maxModelTier": "skill",
+  "timeoutMs": 180000
+}
+```
+(Quy tắc retry dùng chung từ config, không cần truyền per-task)
+
+### Database: `scheduled_tasks`
+
+| Column | Type | Mô tả |
+|--------|------|-------|
+| `task_id` | int PK | |
+| `uid` | int FK → users | Owner task |
+| `task_code` | varchar unique | Mã định danh |
+| `cron_expression` | varchar | Biểu thức cron |
+| `agent_prompt` | text | Lệnh cho agent |
+| `allowed_skills` | json | Skill được phép (null = tất cả) |
+| `status` | enum | active / paused / disabled |
+| `source` | enum | heartbeat / agent / manual |
+| `max_retries` | int (default 3) | Retry tối đa |
+| `consecutive_failures` | int | Đếm fail liên tiếp |
+| `max_model_tier` | varchar | Giới hạn model tier |
+| `timeout_ms` | int (default 120000) | Timeout per run |
+| `last_run_at` | timestamp | Lần chạy gần nhất |
+| `last_error` | text | Lỗi gần nhất |
+
+### Files
+
+```
+src/agent/scheduler/
+├── entities/scheduled-task.entity.ts    # TypeORM entity
+├── scheduled-tasks.service.ts           # Core engine + retry policy
+├── heartbeat.service.ts                 # Parse HEARTBEAT.md → tasks
+└── scheduler.module.ts                  # NestJS module
+```
+
+---
+
+## Learning — Vectorization & Fine-Tune Export
+
+> **Giai đoạn 3: TỰ HỌC** — Trí nhớ dài hạn & Tiến hóa
+
+Hai cronjob độc lập chạy song song, mỗi ngày lúc **3h sáng (UTC+7)**:
+
+### 1. VectorizationService (RAG Pipeline)
+
+```
+chat_messages (is_vectorized=false)
+    │
+    ▼ Batch 50 messages
+    │
+    ▼ Embedding API (OpenAI text-embedding-3-small / Gemini text-embedding-004)
+    │
+    ▼ Lưu vector → heart/_vectors/<userId>/<msg_id>.json
+    │
+    ▼ Đánh dấu is_vectorized = true
+```
+
+- **Auto-detect embedding provider**: ưu tiên OpenAI → fallback Gemini (dựa vào API key trong bảng `config`)
+- **Batched processing**: 50 messages/batch × tối đa 20 batches/run = 1000 messages/ngày
+- **Lock cơ chế**: `running` flag tránh chạy chồng chéo
+- **Cosine similarity search**: `memory_search` skill dùng trực tiếp vectors đã lưu
+
+**Luồng search (memory_search skill)**:
+
+```
+User hỏi "Hôm qua tôi nói gì về dự án X?"
+    │
+    ▼ memory_search skill
+    │
+    ▼ VectorizationService.search(userId, query)
+    │
+    ▼ Embed query → vector
+    │
+    ▼ Load all vectors of userId → cosine similarity
+    │
+    ▼ Filter by minScore (default 0.7) → top N results
+    │
+    ▼ Return { content, role, score, date }
+```
+
+### 2. ExportService (Fine-Tune Pipeline)
+
+```
+chat_messages (is_exported=false)
+    │
+    ▼ Batch 100 messages
+    │
+    ▼ Group by userId → threadId
+    │
+    ▼ Ghi 2 format vào heart/_exports/<userId>/YYYY-MM-DD.jsonl:
+    │   ├── Raw messages: { thread_id, msg_id, role, content, tokens_used, created_at }
+    │   └── Training pairs: { _type: "training_pair", messages: [user, assistant] }
+    │
+    ▼ Đánh dấu is_exported = true
+```
+
+- **Dual format output**: raw messages (để phân tích) + conversation pairs (để fine-tune)
+- **Tương thích OpenAI fine-tune API** và các framework mã nguồn mở (LLaMA, Mistral, Qwen)
+- **Batched**: 100 messages/batch × tối đa 50 batches/run = 5000 messages/ngày
+- **Public API**: `getExportFiles(userId)` — liệt kê file đã export cho user
+
+### Cron Schedule
+
+| Cronjob | Cron Expression | Timezone | Mục đích |
+|---------|----------------|----------|----------|
+| `vectorize_messages` | `0 0 3 * * *` | Asia/Ho_Chi_Minh | Embed messages → vector storage |
+| `export_messages` | `0 0 3 * * *` | Asia/Ho_Chi_Minh | Export .jsonl cho fine-tuning |
+
+Cả hai chạy **song song** (NestJS `@Cron` scheduler), mỗi service có lock riêng nên không block nhau hay ảnh hưởng đến tác vụ agent đang xử lý.
+
+### Cấu trúc file output
+
+```
+heart/
+├── _vectors/
+│   └── <userId>/
+│       └── <msg_id>.json       # { id, threadId, userId, role, content (2000 chars), vector[], createdAt }
+│
+└── _exports/
+    └── <userId>/
+        └── YYYY-MM-DD.jsonl    # Append-only, mỗi ngày 1 file
+```
+
+### Nâng cấp Production
+
+Hiện tại dùng file-based storage cho vectors (phù hợp dev/small-scale). Để scale lên:
+
+| Backend | Thay đổi | Ưu điểm |
+|---------|---------|---------|
+| **pgvector** | Thêm extension + table `message_vectors` | Không cần infra mới, query SQL |
+| **Qdrant** | Thay `storeVectors()` + `loadUserVectors()` | ANN search siêu nhanh, filter metadata |
+| **Milvus** | Tương tự Qdrant | Scale ngang, GPU support |
+
+### Module Wiring
+
+```
+LearningModule
+├── imports: [ChatModule, GlobalConfigModule]
+├── providers: [VectorizationService, ExportService]
+└── exports: [VectorizationService, ExportService]
+
+AgentModule.imports += [LearningModule]
+SkillsModule.imports += [LearningModule]   ← để MemorySearchSkill inject VectorizationService
+```
 
 ---
 

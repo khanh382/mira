@@ -34,4 +34,13 @@ export class Config {
 
   @Column({ name: 'cof_firecrawl_api_key', nullable: true })
   firecrawlApiKey: string;
+
+  // ─── Scheduler / Heartbeat (quy tắc chung cho cron & heartbeat) ───
+  /** Số lần thử lại tối đa trong 1 lượt tick (mặc định 3). Áp dụng cho mọi user. */
+  @Column({ name: 'cof_scheduler_max_retries_per_tick', nullable: true })
+  schedulerMaxRetriesPerTick: number | null;
+
+  /** Số lượt tick liên tiếp fail tối đa trước khi tự đóng task (mặc định 3). */
+  @Column({ name: 'cof_scheduler_max_consecutive_failed_ticks', nullable: true })
+  schedulerMaxConsecutiveFailedTicks: number | null;
 }

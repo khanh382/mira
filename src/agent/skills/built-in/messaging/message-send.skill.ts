@@ -9,6 +9,7 @@ import {
   SkillCategory,
   SkillType,
 } from '../../interfaces/skill-runner.interface';
+import { ModelTier } from '../../../pipeline/model-router/model-tier.enum';
 
 const PARAMETERS_SCHEMA = {
   type: 'object',
@@ -39,6 +40,7 @@ const PARAMETERS_SCHEMA = {
     'Use when you need to proactively notify a user or send a message to another platform.',
   category: SkillCategory.MESSAGING,
   parametersSchema: PARAMETERS_SCHEMA,
+  minModelTier: ModelTier.SKILL,
 })
 @Injectable()
 export class MessageSendSkill implements ISkillRunner {
@@ -54,6 +56,7 @@ export class MessageSendSkill implements ISkillRunner {
       category: SkillCategory.MESSAGING,
       type: SkillType.CODE,
       parametersSchema: PARAMETERS_SCHEMA,
+      minModelTier: ModelTier.SKILL,
     };
   }
 

@@ -1,5 +1,6 @@
 import { IInboundMessage } from '../../channels/interfaces/channel.interface';
 import { ILlmMessage } from '../../providers/interfaces/llm-provider.interface';
+import { ModelTier, IntentType } from '../model-router/model-tier.enum';
 
 export enum PipelineStage {
   RECEIVED = 'received',
@@ -9,6 +10,14 @@ export enum PipelineStage {
   AGENT_COMPLETED = 'agent_completed',
   DELIVERED = 'delivered',
   FAILED = 'failed',
+}
+
+export interface IModelRouting {
+  intent: IntentType;
+  tier: ModelTier;
+  model: string;
+  reason: string;
+  fallback: boolean;
 }
 
 export interface IPipelineContext {
@@ -29,6 +38,8 @@ export interface IPipelineContext {
   conversationHistory: ILlmMessage[];
   model?: string;
   activeSkills?: string[];
+
+  routing?: IModelRouting;
 
   agentResponse?: string;
   agentToolCalls?: Array<{ skillCode: string; result: unknown }>;

@@ -38,7 +38,7 @@ export class PipelineService {
       sourceChannelId: message.channelId,
       processedContent: message.content,
       conversationHistory: [],
-      model: options.model ?? 'openai/gpt-4o',
+      model: options.model,
       activeSkills: options.skills,
       startedAt: new Date(),
       metadata: {},

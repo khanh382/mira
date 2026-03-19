@@ -4,6 +4,8 @@ import { ChannelsModule } from './channels/channels.module';
 import { ProvidersModule } from './providers/providers.module';
 import { SkillsModule } from './skills/skills.module';
 import { PipelineModule } from './pipeline/pipeline.module';
+import { SchedulerModule } from './scheduler/scheduler.module';
+import { LearningModule } from './learning/learning.module';
 import { AgentService } from './agent.service';
 import { AgentController } from './agent.controller';
 
@@ -28,6 +30,8 @@ import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
     ProvidersModule,
     SkillsModule,
     PipelineModule,
+    SchedulerModule,
+    LearningModule,
   ],
   controllers: [AgentController],
   providers: [

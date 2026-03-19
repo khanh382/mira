@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { RegisterSkill } from '../../decorators/skill.decorator';
 import {
   ISkillRunner,
@@ -8,21 +8,21 @@ import {
   SkillCategory,
   SkillType,
 } from '../../interfaces/skill-runner.interface';
+import { VectorizationService } from '../../../learning/vectorization.service';
 
 const PARAMETERS_SCHEMA = {
   type: 'object',
   properties: {
     query: { type: 'string', description: 'Semantic search query' },
-    maxResults: { type: 'number', description: 'Maximum results to return', default: 5 },
+    maxResults: {
+      type: 'number',
+      description: 'Maximum results to return',
+      default: 5,
+    },
     minScore: {
       type: 'number',
       description: 'Minimum similarity score threshold (0-1)',
       default: 0.7,
-    },
-    collection: {
-      type: 'string',
-      description: 'Vector collection to search in',
-      default: 'chat_messages',
     },
   },
   required: ['query'],
@@ -42,6 +42,10 @@ const PARAMETERS_SCHEMA = {
 export class MemorySearchSkill implements ISkillRunner {
   private readonly logger = new Logger(MemorySearchSkill.name);
 
+  constructor(
+    @Optional() private readonly vectorization?: VectorizationService,
+  ) {}
+
   get definition(): ISkillDefinition {
     return {
       code: 'memory_search',
@@ -55,19 +59,62 @@ export class MemorySearchSkill implements ISkillRunner {
 
   async execute(context: ISkillExecutionContext): Promise<ISkillResult> {
     const start = Date.now();
-    const { query, maxResults = 5, minScore = 0.7, collection } = context.parameters;
-
-    // TODO: Integrate with Vector DB (Qdrant, Milvus, pgvector)
-    // 1. Embed query string → vector
-    // 2. Search vector DB for nearest neighbors
-    // 3. Return matched documents with scores
-    return {
-      success: false,
-      error:
-        'Vector DB not yet configured. ' +
-        'Integrate Qdrant, Milvus, or pgvector for semantic memory search.',
-      data: { query, maxResults, minScore, collection },
-      metadata: { durationMs: Date.now() - start },
+    const { query, maxResults = 5, minScore = 0.7 } = context.parameters as {
+      query: string;
+      maxResults?: number;
+      minScore?: number;
     };
+    const userId = context.userId;
+
+    if (!this.vectorization) {
+      return {
+        success: false,
+        error: 'VectorizationService not available. LearningModule may not be loaded.',
+        data: { query },
+        metadata: { durationMs: Date.now() - start },
+      };
+    }
+
+    try {
+      const results = await this.vectorization.search(userId, query, {
+        maxResults,
+        minScore,
+      });
+
+      if (results.length === 0) {
+        return {
+          success: true,
+          data: {
+            query,
+            results: [],
+            message: 'No relevant memories found for this query.',
+          },
+          metadata: { durationMs: Date.now() - start },
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          query,
+          results: results.map((r) => ({
+            content: r.content,
+            role: r.role,
+            score: Math.round(r.score * 1000) / 1000,
+            date: r.createdAt,
+          })),
+          totalFound: results.length,
+        },
+        metadata: { durationMs: Date.now() - start },
+      };
+    } catch (error) {
+      this.logger.error(`Memory search failed: ${error.message}`, error.stack);
+      return {
+        success: false,
+        error: `Memory search failed: ${error.message}`,
+        data: { query },
+        metadata: { durationMs: Date.now() - start },
+      };
+    }
   }
 }

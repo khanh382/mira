@@ -10,6 +10,8 @@
  *    Được inject vào system prompt → LLM tự đọc và follow instructions
  */
 
+import { ModelTier } from '../../../agent/pipeline/model-router/model-tier.enum';
+
 // ─── Skill Categories ─────────────────────────────────────────────────
 
 export enum SkillCategory {
@@ -21,6 +23,7 @@ export enum SkillCategory {
   MESSAGING = 'messaging',
   SESSIONS = 'sessions',
   FILESYSTEM = 'filesystem',
+  GOOGLE = 'google',
   CUSTOM = 'custom',
   CLAWHUB = 'clawhub',
 }
@@ -41,6 +44,8 @@ export interface ISkillDefinition {
   parametersSchema?: Record<string, unknown>;
   /** Cờ owner-only: chỉ user level=owner mới dùng được */
   ownerOnly?: boolean;
+  /** Yêu cầu model tier tối thiểu để chạy skill này (default: CHEAP) */
+  minModelTier?: ModelTier;
 }
 
 // ─── Code-based Skill (function calling) ──────────────────────────────
