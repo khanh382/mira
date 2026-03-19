@@ -38,7 +38,7 @@ export class WorkspaceService implements OnModuleInit {
 
   onModuleInit() {
     this.heartDir = path.resolve(
-      this.configService.get('HEART_DIR', './heart'),
+      this.configService.get('BRAIN_DIR', './heart'),
     );
     this.sharedDir = path.join(this.heartDir, '_shared');
 

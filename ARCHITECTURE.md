@@ -194,7 +194,7 @@ Gateway là lớp tiếp nhận giữa user và agent pipeline. **Cùng port** v
 
 ## Heart — Per-User Workspace
 
-Thư mục `heart/` (configurable qua `HEART_DIR` trong .env) lưu trữ dữ liệu agent per-user.
+Thư mục `heart/` (configurable qua `BRAIN_DIR` trong .env) lưu trữ dữ liệu agent per-user.
 
 ```
 heart/
