@@ -24,7 +24,11 @@ const PARAMETERS_SCHEMA = {
       enum: ['tts-1', 'tts-1-hd'],
       default: 'tts-1',
     },
-    speed: { type: 'number', description: 'Speed multiplier (0.25-4.0)', default: 1.0 },
+    speed: {
+      type: 'number',
+      description: 'Speed multiplier (0.25-4.0)',
+      default: 1.0,
+    },
     format: {
       type: 'string',
       enum: ['mp3', 'opus', 'aac', 'flac', 'wav'],
@@ -63,8 +67,13 @@ export class TtsSkill implements ISkillRunner {
 
   async execute(context: ISkillExecutionContext): Promise<ISkillResult> {
     const start = Date.now();
-    const { text, voice = 'alloy', model = 'tts-1', speed = 1.0, format = 'mp3' } =
-      context.parameters;
+    const {
+      text,
+      voice = 'alloy',
+      model = 'tts-1',
+      speed = 1.0,
+      format = 'mp3',
+    } = context.parameters;
 
     const openaiKey = this.configService.get('OPENAI_API_KEY');
     if (!openaiKey) {
@@ -92,7 +101,9 @@ export class TtsSkill implements ISkillRunner {
       });
 
       if (!response.ok) {
-        throw new Error(`OpenAI TTS API ${response.status}: ${await response.text()}`);
+        throw new Error(
+          `OpenAI TTS API ${response.status}: ${await response.text()}`,
+        );
       }
 
       const audioBuffer = Buffer.from(await response.arrayBuffer());

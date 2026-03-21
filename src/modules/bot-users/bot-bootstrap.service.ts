@@ -18,6 +18,10 @@ export class BotBootstrapService implements OnModuleInit {
   private readonly logger = new Logger(BotBootstrapService.name);
 
   private readonly registeredWebhooks = new Map<string, string>();
+  /** Đã setMyCommands thành công cho token này (Telegram). */
+  private readonly telegramCommandsOk = new Set<string>();
+  /** Đã đăng ký slash toàn cục thành công (Discord). */
+  private readonly discordSlashOk = new Set<string>();
 
   constructor(
     @InjectRepository(BotUser)
@@ -44,7 +48,7 @@ export class BotBootstrapService implements OnModuleInit {
       if (this.registeredWebhooks.size === 0) {
         this.logger.warn(
           'WEBHOOK_BASE_URL not set — bot webhook registration skipped. ' +
-          'Set it to your public URL (e.g. https://yourdomain.com) to enable auto-registration.',
+            'Set it to your public URL (e.g. https://yourdomain.com) to enable auto-registration.',
         );
       }
       return;
@@ -72,11 +76,28 @@ export class BotBootstrapService implements OnModuleInit {
           );
           if (changed) registered++;
           else skipped++;
+
+          if (
+            changed ||
+            !this.telegramCommandsOk.has(bot.telegramBotToken)
+          ) {
+            const cmdOk = await this.deliveryService.setTelegramBotCommands(
+              bot.telegramBotToken,
+            );
+            if (cmdOk) this.telegramCommandsOk.add(bot.telegramBotToken);
+          }
         }
 
         if (bot.discordBotToken) {
           this.ensureDiscordRegistered(bot.discordBotToken, normalizedBase);
           skipped++;
+          if (!this.discordSlashOk.has(bot.discordBotToken)) {
+            const slashOk =
+              await this.deliveryService.registerDiscordGlobalSlashCommands(
+                bot.discordBotToken,
+              );
+            if (slashOk) this.discordSlashOk.add(bot.discordBotToken);
+          }
         }
 
         if (bot.zaloBotToken) {
@@ -86,7 +107,9 @@ export class BotBootstrapService implements OnModuleInit {
       }
 
       if (registered > 0) {
-        this.logger.log(`Bot sync: ${registered} webhooks registered, ${skipped} unchanged`);
+        this.logger.log(
+          `Bot sync: ${registered} webhooks registered, ${skipped} unchanged`,
+        );
       }
     } catch (err) {
       this.logger.error(`Bot sync failed: ${err.message}`);
@@ -125,7 +148,7 @@ export class BotBootstrapService implements OnModuleInit {
     this.registeredWebhooks.set(cacheKey, url);
     this.logger.log(
       `Discord interaction endpoint: ${url} ` +
-      `(set this URL in Discord Developer Portal → Interactions Endpoint URL)`,
+        `(set this URL in Discord Developer Portal → Interactions Endpoint URL)`,
     );
   }
 
@@ -137,7 +160,7 @@ export class BotBootstrapService implements OnModuleInit {
     this.registeredWebhooks.set(cacheKey, url);
     this.logger.log(
       `Zalo OA webhook endpoint: ${url} ` +
-      `(set this URL in Zalo OA Admin → Webhook settings)`,
+        `(set this URL in Zalo OA Admin → Webhook settings)`,
     );
   }
 }

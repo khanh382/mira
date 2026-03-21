@@ -18,7 +18,10 @@ const PARAMETERS_SCHEMA = {
       type: 'string',
       description: 'Path to memory file (e.g. "MEMORY.md", "memory/notes.md")',
     },
-    from: { type: 'number', description: 'Start reading from this line number' },
+    from: {
+      type: 'number',
+      description: 'Start reading from this line number',
+    },
     lines: { type: 'number', description: 'Number of lines to read' },
   },
   required: ['path'],
@@ -56,7 +59,11 @@ export class MemoryGetSkill implements ISkillRunner {
 
   async execute(context: ISkillExecutionContext): Promise<ISkillResult> {
     const start = Date.now();
-    const { path: filePath, from, lines } = context.parameters as {
+    const {
+      path: filePath,
+      from,
+      lines,
+    } = context.parameters as {
       path: string;
       from?: number;
       lines?: number;
@@ -81,7 +88,10 @@ export class MemoryGetSkill implements ISkillRunner {
       const fullPath = path.resolve(workspaceDir, filePath);
 
       // Security: prevent path traversal outside workspace
-      if (!fullPath.startsWith(workspaceDir + path.sep) && fullPath !== workspaceDir) {
+      if (
+        !fullPath.startsWith(workspaceDir + path.sep) &&
+        fullPath !== workspaceDir
+      ) {
         return {
           success: false,
           error: 'Path traversal not allowed',

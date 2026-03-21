@@ -39,6 +39,15 @@ export class ChatThread {
   })
   platform: ChatPlatform;
 
+  @Column({ name: 'telegram_id', type: 'varchar', nullable: true })
+  telegramId?: string;
+
+  @Column({ name: 'zalo_id', type: 'varchar', nullable: true })
+  zaloId?: string;
+
+  @Column({ name: 'discord_id', type: 'varchar', nullable: true })
+  discordId?: string;
+
   @Column({ nullable: true })
   title: string;
 

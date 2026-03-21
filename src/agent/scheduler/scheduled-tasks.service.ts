@@ -1,4 +1,11 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SchedulerRegistry } from '@nestjs/schedule';
@@ -151,7 +158,10 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
   async setGlobalRules(options: {
     maxRetriesPerTick?: number;
     maxConsecutiveFailedTicks?: number;
-  }): Promise<{ maxRetriesPerTick: number; maxConsecutiveFailedTicks: number }> {
+  }): Promise<{
+    maxRetriesPerTick: number;
+    maxConsecutiveFailedTicks: number;
+  }> {
     const current = await this.getGlobalRules();
 
     const maxRetriesPerTick =
@@ -166,7 +176,7 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
 
     this.logger.log(
       `Global scheduler rules updated: maxRetriesPerTick=${maxRetriesPerTick}, ` +
-      `maxConsecutiveFailedTicks=${maxConsecutiveFailedTicks}`,
+        `maxConsecutiveFailedTicks=${maxConsecutiveFailedTicks}`,
     );
 
     return { maxRetriesPerTick, maxConsecutiveFailedTicks };
@@ -307,7 +317,7 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
 
         this.logger.log(
           `Task ${taskCode}: success in ${Date.now() - startedAt}ms ` +
-          `(attempt ${attempt}, tokens: ${result.tokensUsed ?? 0})`,
+            `(attempt ${attempt}, tokens: ${result.tokensUsed ?? 0})`,
         );
         this.runningTasks.delete(taskCode);
         return;
@@ -335,13 +345,13 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
       this.unscheduleTask(taskCode);
       this.logger.error(
         `Task ${taskCode}: AUTO-DISABLED after ${newConsecutiveFailures} consecutive failed ticks. ` +
-        `Last error: ${lastError?.message}. Owner must resume manually.`,
+          `Last error: ${lastError?.message}. Owner must resume manually.`,
       );
     } else {
       this.logger.warn(
         `Task ${taskCode}: tick failed after ${maxRetriesPerTick} attempts ` +
-        `(${newConsecutiveFailures}/${maxConsecutiveFailedTicks} consecutive). ` +
-        `Skipping to next cron tick.`,
+          `(${newConsecutiveFailures}/${maxConsecutiveFailedTicks} consecutive). ` +
+          `Skipping to next cron tick.`,
       );
     }
 
@@ -352,10 +362,7 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
     task: ScheduledTask,
   ): Promise<{ tokensUsed: number }> {
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      task.timeoutMs,
-    );
+    const timeout = setTimeout(() => controller.abort(), task.timeoutMs);
 
     try {
       const inboundMessage: IInboundMessage = {

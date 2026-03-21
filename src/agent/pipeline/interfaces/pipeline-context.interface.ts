@@ -26,12 +26,14 @@ export interface IPipelineContext {
 
   userId: number;
   threadId: string;
+  actorTelegramId?: string;
 
   inboundMessage: IInboundMessage;
   sourceChannelId: string;
   processedContent: string;
 
   mediaPath?: string;
+  mediaPaths?: string[];
   mediaUrl?: string;
   transcript?: string;
 

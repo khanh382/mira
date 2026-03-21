@@ -10,6 +10,10 @@ import { ThreadResolverService } from './session-resolver/session-resolver.servi
 import { TelegramWebhookController } from './webhooks/telegram-webhook.controller';
 import { DiscordWebhookController } from './webhooks/discord-webhook.controller';
 import { ZaloWebhookController } from './webhooks/zalo-webhook.controller';
+import { TelegramUpdateProcessorService } from './webhooks/telegram-update-processor.service';
+import { TelegramFallbackPollingService } from './webhooks/telegram-fallback-polling.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { BotUser } from '../modules/bot-users/entities/bot-user.entity';
 
 import { UsersModule } from '../modules/users/users.module';
 import { BotUsersModule } from '../modules/bot-users/bot-users.module';
@@ -35,6 +39,7 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
     ChatModule,
     AgentModule,
     WorkspaceModule,
+    TypeOrmModule.forFeature([BotUser]),
   ],
   controllers: [
     GatewayController,
@@ -46,6 +51,8 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
     GatewayService,
     ThreadResolverService,
     WebChatGateway,
+    TelegramUpdateProcessorService,
+    TelegramFallbackPollingService,
   ],
   exports: [GatewayService, WorkspaceModule],
 })

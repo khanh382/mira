@@ -3,9 +3,13 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ScheduledTasksService, CreateTaskOptions } from './scheduled-tasks.service';
+import {
+  ScheduledTasksService,
+  CreateTaskOptions,
+} from './scheduled-tasks.service';
 import { TaskSource } from './entities/scheduled-task.entity';
 import { UsersService } from '../../modules/users/users.service';
+import { DEFAULT_BRAIN_DIR } from '../../config/brain-dir.config';
 
 /**
  * HeartbeatService — kế thừa concept HEARTBEAT.md từ OpenClaw.
@@ -43,7 +47,7 @@ export class HeartbeatService implements OnModuleInit {
     private readonly scheduledTasksService: ScheduledTasksService,
     private readonly usersService: UsersService,
   ) {
-    this.brainDir = this.configService.get('BRAIN_DIR', './heart');
+    this.brainDir = this.configService.get('BRAIN_DIR', DEFAULT_BRAIN_DIR);
   }
 
   async onModuleInit() {
@@ -129,7 +133,9 @@ export class HeartbeatService implements OnModuleInit {
           maxModelTier: parsed.tier,
           timeoutMs: parsed.timeout,
         });
-        this.logger.log(`Heartbeat created: ${taskCode} for user ${identifier}`);
+        this.logger.log(
+          `Heartbeat created: ${taskCode} for user ${identifier}`,
+        );
       } catch (error) {
         this.logger.warn(
           `Heartbeat create failed for ${taskCode}: ${error.message}`,
@@ -140,9 +146,7 @@ export class HeartbeatService implements OnModuleInit {
 
   // ─── HEARTBEAT.md Parser ──────────────────────────────────
 
-  private parseHeartbeatMd(
-    content: string,
-  ): Array<{
+  private parseHeartbeatMd(content: string): Array<{
     name: string;
     cron: string;
     prompt: string;
@@ -178,9 +182,7 @@ export class HeartbeatService implements OnModuleInit {
     return tasks;
   }
 
-  private extractFields(
-    lines: string[],
-  ): Record<string, string> {
+  private extractFields(lines: string[]): Record<string, string> {
     const fields: Record<string, string> = {};
 
     for (const line of lines) {

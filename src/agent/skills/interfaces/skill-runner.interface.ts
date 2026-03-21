@@ -53,6 +53,9 @@ export interface ISkillDefinition {
 export interface ISkillExecutionContext {
   userId: number;
   threadId: string;
+  /** Một lần chạy pipeline (vd agent loop) — dùng gom browser_debug / skill_draft một thư mục */
+  runId?: string;
+  actorTelegramId?: string;
   parameters: Record<string, unknown>;
   /** Abort signal cho long-running skills */
   signal?: AbortSignal;

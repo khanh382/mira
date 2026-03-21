@@ -18,7 +18,8 @@ import { ClawhubLoaderService } from './clawhub/clawhub-loader.service';
  *
  * 3 nguồn skill:
  * 1. Built-in code skills — @RegisterSkill() decorator, auto-discovered
- * 2. Dynamic code skills — từ bảng skills_registry, load từ file_path
+ * 2. Shared filesystem skills — $BRAIN_DIR/_shared/skills/<skill_code>/skill.json (skills_registry_manage; không còn ghi DB)
+ *    (Entity Skill / bảng skills_registry có thể dùng cho migration hoặc công cụ khác)
  * 3. Prompt skills       — từ ClawhHub/workspace SKILL.md, inject vào prompt
  */
 @Injectable()
@@ -38,7 +39,7 @@ export class SkillsService implements OnModuleInit {
     await this.loadDynamicSkills();
     this.logger.log(
       `Skills ready: ${this.codeRunners.size} code skills, ` +
-      `${this.clawhubLoader.listSkills().length} prompt skills`,
+        `${this.clawhubLoader.listSkills().length} prompt skills`,
     );
   }
 
@@ -118,11 +119,19 @@ export class SkillsService implements OnModuleInit {
 
   async executeSkill(
     skillCode: string,
-    context: { userId: number; threadId: string; parameters: Record<string, unknown> },
+    context: {
+      userId: number;
+      threadId: string;
+      runId?: string;
+      actorTelegramId?: string;
+      parameters: Record<string, unknown>;
+    },
   ) {
     const runner = this.getRunner(skillCode);
     if (!runner) {
-      throw new Error(`Skill "${skillCode}" not found or is a prompt-only skill`);
+      throw new Error(
+        `Skill "${skillCode}" not found or is a prompt-only skill`,
+      );
     }
     return runner.execute(context);
   }
@@ -151,7 +160,71 @@ export class SkillsService implements OnModuleInit {
     return this.skillRepo.findOne({ where: { code } });
   }
 
+  private stableStringify(input: unknown): string {
+    const seen = new WeakSet<object>();
+    const normalize = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map((v) => normalize(v));
+      if (value && typeof value === 'object') {
+        const obj = value as Record<string, unknown>;
+        if (seen.has(obj)) return null;
+        seen.add(obj);
+        const out: Record<string, unknown> = {};
+        for (const k of Object.keys(obj).sort()) out[k] = normalize(obj[k]);
+        return out;
+      }
+      return value;
+    };
+    return JSON.stringify(normalize(input) ?? null);
+  }
+
+  async findDuplicateForCreate(data: Partial<Skill>): Promise<{
+    isDuplicate: boolean;
+    reason?: 'skill_code' | 'skill_name_parameters_schema';
+    existingSkill?: Skill;
+  }> {
+    const code = String(data.code ?? '').trim();
+    const name = String(data.name ?? '').trim();
+
+    if (code) {
+      const byCode = await this.findByCode(code);
+      if (byCode) {
+        return {
+          isDuplicate: true,
+          reason: 'skill_code',
+          existingSkill: byCode,
+        };
+      }
+    }
+
+    if (name && data.parametersSchema != null) {
+      const target = this.stableStringify(data.parametersSchema);
+      const all = await this.findAll();
+      const matched = all.find(
+        (s) =>
+          String(s.name ?? '').trim().toLowerCase() === name.toLowerCase() &&
+          this.stableStringify(s.parametersSchema) === target,
+      );
+      if (matched) {
+        return {
+          isDuplicate: true,
+          reason: 'skill_name_parameters_schema',
+          existingSkill: matched,
+        };
+      }
+    }
+
+    return { isDuplicate: false };
+  }
+
   async create(data: Partial<Skill>): Promise<Skill> {
+    const duplicate = await this.findDuplicateForCreate(data);
+    if (duplicate.isDuplicate) {
+      throw new Error(
+        duplicate.reason === 'skill_code'
+          ? 'Duplicate skill_code detected'
+          : 'Duplicate skill_name + parameters_schema detected',
+      );
+    }
     const skill = this.skillRepo.create(data);
     return this.skillRepo.save(skill);
   }

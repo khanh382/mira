@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ChatService } from '../../modules/chat/chat.service';
 import { GlobalConfigService } from '../../modules/global-config/global-config.service';
 import { ChatMessage } from '../../modules/chat/entities/chat-message.entity';
+import { DEFAULT_BRAIN_DIR } from '../../config/brain-dir.config';
 
 const BATCH_SIZE = 50;
 const MAX_BATCHES_PER_RUN = 20;
@@ -39,7 +40,10 @@ export class VectorizationService {
    * 3h sáng mỗi ngày (TZ=Asia/Ho_Chi_Minh trong .env).
    * Cron expression: second(0) minute(0) hour(3) * * *
    */
-  @Cron('0 0 3 * * *', { name: 'vectorize_messages', timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('0 0 3 * * *', {
+    name: 'vectorize_messages',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
   async runScheduled(): Promise<void> {
     await this.vectorizeAll();
   }
@@ -57,7 +61,9 @@ export class VectorizationService {
     try {
       const embeddingModel = await this.resolveEmbeddingModel();
       if (!embeddingModel) {
-        this.logger.warn('No embedding model available, skipping vectorization');
+        this.logger.warn(
+          'No embedding model available, skipping vectorization',
+        );
         return { processed: 0, batches: 0 };
       }
 
@@ -159,7 +165,9 @@ export class VectorizationService {
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI Embedding API ${response.status}: ${await response.text()}`);
+      throw new Error(
+        `OpenAI Embedding API ${response.status}: ${await response.text()}`,
+      );
     }
 
     const data = await response.json();
@@ -186,7 +194,9 @@ export class VectorizationService {
       );
 
       if (!response.ok) {
-        throw new Error(`Gemini Embedding API ${response.status}: ${await response.text()}`);
+        throw new Error(
+          `Gemini Embedding API ${response.status}: ${await response.text()}`,
+        );
       }
 
       const data = await response.json();
@@ -229,15 +239,18 @@ export class VectorizationService {
       fs.mkdirSync(userDir, { recursive: true });
 
       const filePath = path.join(userDir, `${entry.id}.json`);
-      fs.writeFileSync(filePath, JSON.stringify({
-        id: entry.id,
-        threadId: entry.threadId,
-        userId: entry.userId,
-        role: entry.role,
-        content: entry.content.slice(0, 2000),
-        vector: entry.vector,
-        createdAt: entry.createdAt.toISOString(),
-      }));
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          id: entry.id,
+          threadId: entry.threadId,
+          userId: entry.userId,
+          role: entry.role,
+          content: entry.content.slice(0, 2000),
+          vector: entry.vector,
+          createdAt: entry.createdAt.toISOString(),
+        }),
+      );
     }
   }
 
@@ -249,7 +262,15 @@ export class VectorizationService {
     userId: number,
     query: string,
     options?: { maxResults?: number; minScore?: number },
-  ): Promise<Array<{ id: string; content: string; score: number; role: string; createdAt: string }>> {
+  ): Promise<
+    Array<{
+      id: string;
+      content: string;
+      score: number;
+      role: string;
+      createdAt: string;
+    }>
+  > {
     const maxResults = options?.maxResults ?? 5;
     const minScore = options?.minScore ?? 0.7;
 
@@ -274,9 +295,15 @@ export class VectorizationService {
       .map(({ vector, ...rest }) => rest);
   }
 
-  private async loadUserVectors(
-    userId: number,
-  ): Promise<Array<{ id: string; content: string; role: string; vector: number[]; createdAt: string }>> {
+  private async loadUserVectors(userId: number): Promise<
+    Array<{
+      id: string;
+      content: string;
+      role: string;
+      vector: number[];
+      createdAt: string;
+    }>
+  > {
     const fs = await import('fs');
     const path = await import('path');
 
@@ -288,7 +315,9 @@ export class VectorizationService {
 
     for (const file of files) {
       try {
-        const data = JSON.parse(fs.readFileSync(path.join(userDir, file), 'utf-8'));
+        const data = JSON.parse(
+          fs.readFileSync(path.join(userDir, file), 'utf-8'),
+        );
         results.push(data);
       } catch {
         // skip corrupt files
@@ -300,7 +329,9 @@ export class VectorizationService {
 
   private cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) return 0;
-    let dot = 0, magA = 0, magB = 0;
+    let dot = 0,
+      magA = 0,
+      magB = 0;
     for (let i = 0; i < a.length; i++) {
       dot += a[i] * b[i];
       magA += a[i] * a[i];
@@ -312,7 +343,7 @@ export class VectorizationService {
 
   private getVectorDir(): string {
     const path = require('path');
-    const brainDir = this.configService.get('BRAIN_DIR', './heart');
+    const brainDir = this.configService.get('BRAIN_DIR', DEFAULT_BRAIN_DIR);
     return path.resolve(brainDir, '_vectors');
   }
 

@@ -48,21 +48,21 @@ const getImports = () => {
   if (shouldConnectDatabase()) {
     imports.push(
       TypeOrmModule.forRootAsync({
-        useFactory: (configService: ConfigService) => databaseConfig(configService),
+        useFactory: (configService: ConfigService) =>
+          databaseConfig(configService),
         inject: [ConfigService],
       }),
     );
 
-    imports.push(
-      UsersModule,
-      BotUsersModule,
-      ChatModule,
-      GlobalConfigModule,
-    );
+    imports.push(UsersModule, BotUsersModule, ChatModule, GlobalConfigModule);
 
-    console.log('✅ Database configuration detected - TypeORM will be initialized');
+    console.log(
+      '✅ Database configuration detected - TypeORM will be initialized',
+    );
   } else {
-    console.log('⚠️  Database configuration not found - TypeORM will be skipped');
+    console.log(
+      '⚠️  Database configuration not found - TypeORM will be skipped',
+    );
   }
 
   // Agent system (hooks, channels, providers, skills, pipeline)

@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ILlmProvider, ILlmRequestOptions, ILlmResponse } from './interfaces/llm-provider.interface';
+import {
+  ILlmProvider,
+  ILlmRequestOptions,
+  ILlmResponse,
+} from './interfaces/llm-provider.interface';
 import { GlobalConfigService } from '../../modules/global-config/global-config.service';
 
 @Injectable()
@@ -44,7 +48,9 @@ export class ProvidersService {
     this.keysLoaded = true;
   }
 
-  resolveProvider(model: string): { provider: ILlmProvider; modelName: string } | null {
+  resolveProvider(
+    model: string,
+  ): { provider: ILlmProvider; modelName: string } | null {
     if (model.includes('/')) {
       const [providerId, ...rest] = model.split('/');
       const modelName = rest.join('/');
@@ -56,7 +62,11 @@ export class ProvidersService {
 
     for (const provider of this.providers.values()) {
       if (!provider.isConfigured()) continue;
-      if (provider.supportedModels.some((m) => model.startsWith(m) || m.startsWith(model))) {
+      if (
+        provider.supportedModels.some(
+          (m) => model.startsWith(m) || m.startsWith(model),
+        )
+      ) {
         return { provider, modelName: model };
       }
     }
@@ -69,7 +79,9 @@ export class ProvidersService {
 
     const resolved = this.resolveProvider(options.model);
     if (!resolved) {
-      throw new Error(`No configured provider found for model: ${options.model}`);
+      throw new Error(
+        `No configured provider found for model: ${options.model}`,
+      );
     }
 
     return resolved.provider.chat({

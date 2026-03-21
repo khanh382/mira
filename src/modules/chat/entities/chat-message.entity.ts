@@ -33,6 +33,15 @@ export class ChatMessage {
   @Column({ name: 'uid' })
   userId: number;
 
+  @Column({ name: 'telegram_id', type: 'varchar', nullable: true })
+  telegramId?: string;
+
+  @Column({ name: 'zalo_id', type: 'varchar', nullable: true })
+  zaloId?: string;
+
+  @Column({ name: 'discord_id', type: 'varchar', nullable: true })
+  discordId?: string;
+
   @ManyToOne(() => User, (user) => user.chatMessages)
   @JoinColumn({ name: 'uid' })
   user: User;

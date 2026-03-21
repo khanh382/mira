@@ -12,6 +12,7 @@ import { ModelRouterModule } from './model-router/model-router.module';
 import { ChatModule } from '../../modules/chat/chat.module';
 import { UsersModule } from '../../modules/users/users.module';
 import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
+import { ControlModule } from '../control/control.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
     ChatModule,
     UsersModule,
     WorkspaceModule,
+    ControlModule,
   ],
   providers: [
     PipelineService,

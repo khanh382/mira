@@ -13,7 +13,10 @@ import {
 const PARAMETERS_SCHEMA = {
   type: 'object',
   properties: {
-    url: { type: 'string', description: 'The URL to fetch and extract content from' },
+    url: {
+      type: 'string',
+      description: 'The URL to fetch and extract content from',
+    },
     mode: {
       type: 'string',
       enum: ['markdown', 'text', 'html'],
@@ -104,7 +107,9 @@ export class WebFetchSkill implements ISkillRunner {
     });
 
     if (!response.ok) {
-      throw new Error(`Firecrawl API ${response.status}: ${await response.text()}`);
+      throw new Error(
+        `Firecrawl API ${response.status}: ${await response.text()}`,
+      );
     }
 
     const data = await response.json();

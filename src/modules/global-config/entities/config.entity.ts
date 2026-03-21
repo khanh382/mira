@@ -41,6 +41,9 @@ export class Config {
   schedulerMaxRetriesPerTick: number | null;
 
   /** Số lượt tick liên tiếp fail tối đa trước khi tự đóng task (mặc định 3). */
-  @Column({ name: 'cof_scheduler_max_consecutive_failed_ticks', nullable: true })
+  @Column({
+    name: 'cof_scheduler_max_consecutive_failed_ticks',
+    nullable: true,
+  })
   schedulerMaxConsecutiveFailedTicks: number | null;
 }

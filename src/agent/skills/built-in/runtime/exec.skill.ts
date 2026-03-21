@@ -19,7 +19,11 @@ const PARAMETERS_SCHEMA = {
   properties: {
     command: { type: 'string', description: 'Shell command to execute' },
     workdir: { type: 'string', description: 'Working directory' },
-    timeout: { type: 'number', description: 'Timeout in milliseconds', default: 30000 },
+    timeout: {
+      type: 'number',
+      description: 'Timeout in milliseconds',
+      default: 30000,
+    },
     env: {
       type: 'object',
       description: 'Additional environment variables',

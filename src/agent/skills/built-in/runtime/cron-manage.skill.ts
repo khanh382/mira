@@ -9,9 +9,7 @@ import {
   SkillType,
 } from '../../interfaces/skill-runner.interface';
 import { ModelTier } from '../../../pipeline/model-router/model-tier.enum';
-import {
-  ScheduledTasksService,
-} from '../../../scheduler/scheduled-tasks.service';
+import { ScheduledTasksService } from '../../../scheduler/scheduled-tasks.service';
 import { TaskSource } from '../../../scheduler/entities/scheduled-task.entity';
 
 const PARAMETERS_SCHEMA = {
@@ -19,7 +17,15 @@ const PARAMETERS_SCHEMA = {
   properties: {
     action: {
       type: 'string',
-      enum: ['list', 'add', 'remove', 'pause', 'resume', 'status', 'set_global_rules'],
+      enum: [
+        'list',
+        'add',
+        'remove',
+        'pause',
+        'resume',
+        'status',
+        'set_global_rules',
+      ],
       description:
         'Action: list, add, remove, pause, resume, status, set_global_rules (owner only - thiết lập quy tắc chung)',
     },
@@ -101,9 +107,7 @@ const PARAMETERS_SCHEMA = {
 export class CronManageSkill implements ISkillRunner {
   private readonly logger = new Logger(CronManageSkill.name);
 
-  constructor(
-    private readonly scheduledTasksService: ScheduledTasksService,
-  ) {}
+  constructor(private readonly scheduledTasksService: ScheduledTasksService) {}
 
   get definition(): ISkillDefinition {
     return {
@@ -279,7 +283,8 @@ export class CronManageSkill implements ISkillRunner {
   ): Promise<ISkillResult> {
     const { taskCode } = context.parameters as any;
     const task = await this.findUserTask(taskCode, context.userId);
-    if (!task.success) return { ...task, metadata: { durationMs: Date.now() - start } };
+    if (!task.success)
+      return { ...task, metadata: { durationMs: Date.now() - start } };
 
     await this.scheduledTasksService.pause((task.data as any).id);
 
@@ -296,7 +301,8 @@ export class CronManageSkill implements ISkillRunner {
   ): Promise<ISkillResult> {
     const { taskCode } = context.parameters as any;
     const task = await this.findUserTask(taskCode, context.userId);
-    if (!task.success) return { ...task, metadata: { durationMs: Date.now() - start } };
+    if (!task.success)
+      return { ...task, metadata: { durationMs: Date.now() - start } };
 
     await this.scheduledTasksService.resume((task.data as any).id);
 
@@ -357,7 +363,8 @@ export class CronManageSkill implements ISkillRunner {
       context.parameters as any;
 
     if (
-      (maxRetriesPerTick != null && (maxRetriesPerTick < 1 || maxRetriesPerTick > 10)) ||
+      (maxRetriesPerTick != null &&
+        (maxRetriesPerTick < 1 || maxRetriesPerTick > 10)) ||
       (maxConsecutiveFailedTicks != null &&
         (maxConsecutiveFailedTicks < 1 || maxConsecutiveFailedTicks > 10))
     ) {

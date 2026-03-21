@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { IChannelAdapter, IInboundMessage } from './interfaces/channel.interface';
+import {
+  IChannelAdapter,
+  IInboundMessage,
+} from './interfaces/channel.interface';
 
 /**
  * ChannelsService quản lý registry các channel adapters.
@@ -12,7 +15,9 @@ export class ChannelsService {
 
   registerChannel(adapter: IChannelAdapter): void {
     this.channels.set(adapter.meta.id, adapter);
-    this.logger.log(`Channel registered: ${adapter.meta.name} (${adapter.meta.id})`);
+    this.logger.log(
+      `Channel registered: ${adapter.meta.name} (${adapter.meta.id})`,
+    );
   }
 
   getChannel(channelId: string): IChannelAdapter | undefined {
@@ -37,7 +42,9 @@ export class ChannelsService {
         await channel.initialize({});
         this.logger.log(`Channel ${id} initialized`);
       } catch (error) {
-        this.logger.error(`Failed to initialize channel ${id}: ${error.message}`);
+        this.logger.error(
+          `Failed to initialize channel ${id}: ${error.message}`,
+        );
       }
     }
   }

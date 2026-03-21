@@ -14,9 +14,7 @@ export class GlobalConfigService {
     return this.configRepo.findOne({ where: {} });
   }
 
-  async getApiKey(
-    provider: string,
-  ): Promise<string | null> {
+  async getApiKey(provider: string): Promise<string | null> {
     const config = await this.getConfig();
     if (!config) return null;
 

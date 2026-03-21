@@ -1,5 +1,10 @@
 // src/middleware/rate-limiter.middleware.ts
-import { Injectable, NestMiddleware, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  Injectable,
+  NestMiddleware,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 
 interface RateLimitInfo {
@@ -44,7 +49,7 @@ export class RateLimiterMiddleware implements NestMiddleware {
     if (rateLimitInfo.count >= this.MAX_REQUESTS) {
       // Tính thời gian còn lại của cửa sổ
       const timeLeft = Math.ceil(
-        (windowSize - (now - rateLimitInfo.firstRequestTime)) / 1000 / 60
+        (windowSize - (now - rateLimitInfo.firstRequestTime)) / 1000 / 60,
       );
 
       // Set rate limit headers
@@ -52,7 +57,7 @@ export class RateLimiterMiddleware implements NestMiddleware {
       res.header('X-RateLimit-Remaining', '0');
       res.header(
         'X-RateLimit-Reset',
-        new Date(rateLimitInfo.firstRequestTime + windowSize).toUTCString()
+        new Date(rateLimitInfo.firstRequestTime + windowSize).toUTCString(),
       );
 
       throw new HttpException(
@@ -61,7 +66,7 @@ export class RateLimiterMiddleware implements NestMiddleware {
           message: `Too many requests, please try again after ${timeLeft} minutes`,
           timeLeft,
         },
-        HttpStatus.TOO_MANY_REQUESTS
+        HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
@@ -73,11 +78,11 @@ export class RateLimiterMiddleware implements NestMiddleware {
     res.header('X-RateLimit-Limit', this.MAX_REQUESTS.toString());
     res.header(
       'X-RateLimit-Remaining',
-      (this.MAX_REQUESTS - rateLimitInfo.count).toString()
+      (this.MAX_REQUESTS - rateLimitInfo.count).toString(),
     );
     res.header(
       'X-RateLimit-Reset',
-      new Date(rateLimitInfo.firstRequestTime + windowSize).toUTCString()
+      new Date(rateLimitInfo.firstRequestTime + windowSize).toUTCString(),
     );
 
     next();

@@ -78,9 +78,7 @@ export class HooksService implements OnModuleInit {
       handler: handler as PluginHookHandler,
       priority,
     });
-    this.pluginHooks
-      .get(hookName)
-      .sort((a, b) => b.priority - a.priority);
+    this.pluginHooks.get(hookName).sort((a, b) => b.priority - a.priority);
 
     this.logger.debug(
       `Registered plugin hook: ${hookName} (priority: ${priority})`,

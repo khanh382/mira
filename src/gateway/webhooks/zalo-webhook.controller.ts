@@ -12,6 +12,7 @@ import { BotDeliveryService } from '../../modules/bot-users/bot-delivery.service
 import { BotPlatform } from '../../modules/bot-users/entities/bot-access-grant.entity';
 import { GatewayService } from '../gateway.service';
 import { ChatPlatform } from '../../modules/chat/entities/chat-thread.entity';
+import { ZALO_QUICK_MENU_BUTTONS } from '../../modules/bot-users/bot-platform-menu';
 
 @Controller('webhooks/zalo')
 export class ZaloWebhookController {
@@ -97,9 +98,43 @@ export class ZaloWebhookController {
       return { ok: true, denied: true };
     }
 
+    const dedupId =
+      event?.event_id ??
+      event?.eventId ??
+      event?.id ??
+      event?.message?.id ??
+      event?.message?.message_id;
+
+    const menuTrigger =
+      /^(menu|lenh|help|\/menu)$/i.test(content) ||
+      /^lệnh$/i.test(content.trim());
+    if (menuTrigger) {
+      const menuResult = await this.gatewayService.handleMessage(
+        ownerUid,
+        '/menu',
+        {
+          channelId: 'zalo',
+          platform: ChatPlatform.ZALO,
+          dedupId: dedupId ? String(dedupId) : undefined,
+          zaloUserId: senderId ?? undefined,
+        },
+      );
+      if (menuResult.response) {
+        await this.deliveryService.sendZalo(
+          botToken,
+          senderId,
+          menuResult.response,
+          [...ZALO_QUICK_MENU_BUTTONS],
+        );
+      }
+      return { ok: true, menu: true };
+    }
+
     const result = await this.gatewayService.handleMessage(ownerUid, content, {
       channelId: 'zalo',
       platform: ChatPlatform.ZALO,
+      dedupId: dedupId ? String(dedupId) : undefined,
+      zaloUserId: senderId ?? undefined,
     });
 
     if (result.response) {

@@ -11,10 +11,7 @@ export class ChatService {
     private readonly messageRepo: Repository<ChatMessage>,
   ) {}
 
-  async findByThreadId(
-    threadId: string,
-    limit = 50,
-  ): Promise<ChatMessage[]> {
+  async findByThreadId(threadId: string, limit = 50): Promise<ChatMessage[]> {
     return this.messageRepo.find({
       where: { threadId },
       order: { createdAt: 'ASC' },
@@ -48,6 +45,9 @@ export class ChatService {
   async createMessage(data: {
     threadId: string;
     userId: number;
+    telegramId?: string;
+    zaloId?: string;
+    discordId?: string;
     role: MessageRole;
     content: string;
     tokensUsed?: number;

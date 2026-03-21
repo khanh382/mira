@@ -19,7 +19,10 @@ const PARAMETERS_SCHEMA = {
       enum: ['telegram', 'discord', 'zalo', 'slack', 'webchat'],
       description: 'Target messaging channel',
     },
-    targetId: { type: 'string', description: 'User/group/channel ID on the target platform' },
+    targetId: {
+      type: 'string',
+      description: 'User/group/channel ID on the target platform',
+    },
     text: { type: 'string', description: 'Message text to send' },
     media: {
       type: 'array',
@@ -69,7 +72,11 @@ export class MessageSendSkill implements ISkillRunner {
       return {
         success: false,
         error: `Channel "${channelId}" not found or not configured`,
-        data: { availableChannels: this.channelsService.listConfiguredChannels().map((c) => c.meta.id) },
+        data: {
+          availableChannels: this.channelsService
+            .listConfiguredChannels()
+            .map((c) => c.meta.id),
+        },
         metadata: { durationMs: Date.now() - start },
       };
     }

@@ -1,13 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HooksService } from '../../hooks/hooks.service';
-import { InternalHookEvent, PluginHookName } from '../../hooks/enums/hook-events.enum';
-import { IPipelineContext, PipelineStage } from '../interfaces/pipeline-context.interface';
+import {
+  InternalHookEvent,
+  PluginHookName,
+} from '../../hooks/enums/hook-events.enum';
+import {
+  IPipelineContext,
+  PipelineStage,
+} from '../interfaces/pipeline-context.interface';
 import { ILlmMessage } from '../../providers/interfaces/llm-provider.interface';
 import { ChatService } from '../../../modules/chat/chat.service';
 import { UsersService } from '../../../modules/users/users.service';
 import { WorkspaceService } from '../../../gateway/workspace/workspace.service';
 
 const HISTORY_LIMIT = 15;
+const MIN_CURRENT_TOKENS_FOR_PRUNE = 3;
+// Similarity heuristic: if the current message shares too few keywords with the
+// last user message in history, we treat it as a "new topic" turn.
+// Higher threshold => prune more aggressively when topic likely changed.
+const TOPIC_JACCARD_THRESHOLD = 0.1;
 
 @Injectable()
 export class PreprocessStep {
@@ -29,8 +40,26 @@ export class PreprocessStep {
     // ─── 2. Load recent conversation history from DB ──────
     await this.loadConversationHistory(context);
 
+    // Gợi ý tool khi có file đính kèm (đường dẫn thường đã nằm trong content từ gateway)
+    const hasLocalMedia =
+      Boolean(context.mediaPath) ||
+      Boolean(context.mediaUrl) ||
+      (context.mediaPaths?.length ?? 0) > 0;
+    if (hasLocalMedia) {
+      const hint =
+        '\n\n[Hệ thống] Có file/URL đính kèm — khi cần hãy gọi tool thật: ' +
+        '`pdf_read` cho PDF, `image_understand` cho ảnh (khi vision đã bật), ' +
+        '`file_read` cho json/txt/md/csv/log theo đường dẫn tuyệt đối trên server, ' +
+        'hoặc `exec` để xử lý file khi phù hợp; không bịa kết quả đọc file.';
+      if (
+        !context.processedContent.includes('[Hệ thống] Có file/URL đính kèm')
+      ) {
+        context.processedContent += hint;
+      }
+    }
+
     // ─── 3. Media transcription hook ──────────────────────
-    if (context.mediaPath || context.mediaUrl) {
+    if (hasLocalMedia) {
       await this.hooksService.emitInternal(
         InternalHookEvent.MESSAGE_TRANSCRIBED,
         {
@@ -121,6 +150,12 @@ export class PreprocessStep {
 
       context.conversationHistory.push(...historyMessages);
 
+      // Topic relevance pruning:
+      // When a new message is unrelated to the recent topic, we shouldn't inject
+      // the full last-N history; otherwise the model may "drift" and repeat
+      // old content from conversationHistory.
+      this.maybePruneIrrelevantHistory(context, historyMessages);
+
       this.logger.debug(
         `[${context.runId}] Loaded ${historyMessages.length} history messages from thread ${context.threadId}`,
       );
@@ -129,5 +164,181 @@ export class PreprocessStep {
         `[${context.runId}] Failed to load conversation history: ${error.message}`,
       );
     }
+  }
+
+  private maybePruneIrrelevantHistory(
+    context: IPipelineContext,
+    historyMessages: ILlmMessage[],
+  ): void {
+    const current = context.processedContent ?? '';
+    const currentTokens = this.tokenizeKeywords(current);
+
+    // If current turn explicitly involves web/browser/weather continuation,
+    // don't prune history; we want the model to see the weather topic it
+    // is continuing from.
+    if (
+      /(\bbrowser\b|\btrình\s*duyệt\b|\btrinh\s*duyet\b|\bsearch\b|\btìm\s*kiếm\b|\bthời\s*tiết\b|\bthoi\s*tiet\b|\bdự\s*báo\b|\bdu\s*bao\b|\bweather\b|\bforecast\b)/i.test(
+        current,
+      )
+    ) {
+      return;
+    }
+
+    // Strong intent: user asks to dump "all messages" of this session.
+    // In this turn, we should not mix old history because it can trigger
+    // unrelated tool-based behavior.
+    const isSessionDumpRequest =
+      /\b(session|phiên|phien)\b/i.test(current) &&
+      /\b(toàn\s*bộ|toan\s*bo|tất\s*cả|tat\s*ca|liệt\s*kê|liet\s*ke|xem)\b/i.test(
+        current,
+      ) &&
+      /\b(tin\s*nhắn|tin\s*nhan|messages|chat|lịch\s*sử|lich\s*su)\b/i.test(
+        current,
+      );
+    if (isSessionDumpRequest) {
+      context.conversationHistory = context.conversationHistory.filter(
+        (m) => m.role === 'system',
+      );
+      this.logger.debug(`[${context.runId}] Pruned history for session-dump intent`);
+      return;
+    }
+
+    // Don't prune if the current message looks like a short confirmation
+    // (e.g. "đồng ý xóa") — those often rely on conversation history.
+    const looksLikeConfirmation =
+      /^(?:\/)?(đồng\s*ý|ok|được|xác\s*nhận|confirm)\b/i.test(current.trim()) ||
+      /\b(xóa|xoa|delete|remove|rm|trash|thùng\s*rác|thung\s*rac)\b/i.test(
+        current,
+      );
+    if (looksLikeConfirmation) return;
+
+    const hasContinuation =
+      /\b(như\s*trên|tiếp\s*tục|tiếp\s*theo|vẫn|làm\s*tiếp|gửi\s*tiếp|tiếp\s*nhé)\b/i.test(
+        current,
+      );
+
+    if (currentTokens.length < MIN_CURRENT_TOKENS_FOR_PRUNE) return;
+
+    const lastUser = [...historyMessages]
+      .slice()
+      .reverse()
+      .find((m) => m.role === 'user');
+    if (!lastUser) return;
+
+    const score = this.topicJaccard(current, lastUser.content);
+
+    // Common case: structured "Chủ đề: ... Nội dung: ..." email prompts.
+    const structuredNewPrompt =
+      /\b(chủ\s*đề\s*:|chu\s*de\s*:|nội\s*dung\s*:|noi\s*dung\s*:)\b/i.test(
+        current,
+      );
+
+    // If current is a structured new prompt and shares little with the last user message,
+    // prune history aggressively.
+    const shouldPrune = structuredNewPrompt
+      ? score < TOPIC_JACCARD_THRESHOLD * 1.5
+      : score < TOPIC_JACCARD_THRESHOLD;
+
+    if (!shouldPrune) return;
+
+    // If user uses continuation cues, don't drop all history.
+    // Keep a small trailing window to preserve "continuing the last task"
+    // while still removing older unrelated topic drift.
+    const systemMessages = context.conversationHistory.filter(
+      (m) => m.role === 'system',
+    );
+    const nonSystemMessages = context.conversationHistory.filter(
+      (m) => m.role !== 'system',
+    );
+    const keepCount = hasContinuation ? 4 : 0;
+    const keptTail = keepCount > 0 ? nonSystemMessages.slice(-keepCount) : [];
+
+    context.conversationHistory = [...systemMessages, ...keptTail];
+    this.logger.debug(
+      `[${context.runId}] Pruned irrelevant history (jaccard=${score.toFixed(3)}; currentTokens=${currentTokens.length}; hasContinuation=${hasContinuation}; keepNonSystem=${keptTail.length})`,
+    );
+  }
+
+  private tokenizeKeywords(text: string): string[] {
+    const normalized = this.normalizeText(text);
+    const raw = normalized
+      .split(/[^a-z0-9_]+/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    // Minimal stopword list (Vietnamese + English) to avoid false overlap.
+    const stop = new Set([
+      'va',
+      'la',
+      'cua',
+      'de',
+      'duoc',
+      'voi',
+      'tren',
+      'duoi',
+      'trong',
+      'ngoai',
+      'nhung',
+      'mot',
+      'nhieu',
+      'va',
+      'va',
+      'toi',
+      'ban',
+      'em',
+      'anh',
+      'se',
+      'seu',
+      'the',
+      'that',
+      'this',
+      'with',
+      'from',
+      'for',
+      'and',
+      'or',
+      'to',
+      'in',
+      'on',
+      'at',
+      'is',
+      'are',
+      'as',
+      'an',
+      'a',
+      'the',
+      'khi',
+      'nen',
+      'se',
+      'se',
+      'hop',
+    ]);
+
+    return raw
+      .filter((t) => t.length >= 3 && !stop.has(t))
+      .slice(0, 120);
+  }
+
+  private topicJaccard(a: string, b: string): number {
+    const A = new Set(this.tokenizeKeywords(a));
+    const B = new Set(this.tokenizeKeywords(b));
+    if (A.size === 0 || B.size === 0) return 0;
+
+    let inter = 0;
+    for (const w of A) {
+      if (B.has(w)) inter++;
+    }
+
+    const union = A.size + B.size - inter;
+    return union === 0 ? 0 : inter / union;
+  }
+
+  private normalizeText(text: string): string {
+    return (text ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 }

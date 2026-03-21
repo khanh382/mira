@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "scrollAssistBeforeRetry": true,
+  "click": [
+    "[aria-label*=\"Thêm ảnh\"]",
+    "[aria-label*=\"Thêm ảnh / video\"]",
+    "[aria-label*=\"Thêm ảnh/video\"]",
+    "[aria-label*=\"Photo\"]",
+    "[aria-label*=\"Add photo\"]",
+    "[aria-label*=\"Add photos\"]",
+    "[role=\"button\"][aria-label*=\"Đăng cập nhật trạng thái\"]",
+    "[role=\"button\"][aria-label*=\"Update status\"]",
+    "[role=\"button\"][aria-label*=\"Write something\"]",
+    "[aria-label*=\"Bạn đang nghĩ gì\"]",
+    "[aria-label*=\"What's on your mind\"]",
+    "[aria-label*=\"Tạo bài viết\"]",
+    "[aria-label*=\"Create post\"]",
+    "[role=\"button\"][aria-label*=\"Bài viết\"]",
+    "[role=\"button\"][aria-label*=\"Post\"]",
+    "div[role=\"button\"]:has-text(\"Tiếp\")",
+    "div[role=\"button\"]:has-text(\"Next\")",
+    "button:has-text(\"Tiếp\")",
+    "button:has-text(\"Next\")",
+    "[role=\"button\"][aria-label*=\"Tiếp\"]",
+    "[role=\"button\"][aria-label*=\"Next\"]",
+    "div[role=\"button\"]:has-text(\"Đăng\")",
+    "div[role=\"button\"]:has-text(\"Post\")",
+    "span:has-text(\"Đăng\")",
+    "span:has-text(\"Post\")",
+    "button:has-text(\"Đăng\")",
+    "button:has-text(\"Post\")",
+    "[role=\"button\"][aria-label*=\"Đăng\"]",
+    "[role=\"button\"][aria-label*=\"Post\"]"
+  ],
+  "type": [
+    "input[type=\"file\"]",
+    "input[type='file']",
+    "div[role=\"textbox\"]",
+    "div[contenteditable=\"true\"][role=\"textbox\"]",
+    "div[contenteditable=\"true\"]",
+    "[aria-label*=\"Đăng cập nhật trạng thái\"][role=\"textbox\"]",
+    "[aria-label*=\"cập nhật trạng thái\"][role=\"textbox\"]",
+    "[aria-label*=\"Bạn đang nghĩ gì\"][role=\"textbox\"]",
+    "[aria-label*=\"What's on your mind\"][role=\"textbox\"]"
+  ],
+  "publishVerification": {
+    "enabled": true,
+    "maxPollAttempts": 18,
+    "bodyTextContains": [
+      "đã đăng",
+      "đang đăng",
+      "đang đăng bài",
+      "đăng bài viết",
+      "đăng lên bảng tin",
+      "bài viết của bạn đang được xử lý",
+      "bài viết của bạn đang được đăng",
+      "để xem bài viết của bạn",
+      "đang được xử lý",
+      "vừa chia sẻ",
+      "đã chia sẻ",
+      "chia sẻ công khai",
+      "your post is now published",
+      "post published",
+      "your post is published",
+      "your post is being processed",
+      "just shared",
+      "you shared",
+      "view your post",
+      "see your post",
+      "shared with",
+      "posted",
+      "sharing",
+      "on your timeline",
+      "xem trên dòng thời gian",
+      "successfully shared",
+      "đăng thành công"
+    ],
+    "liveRegionTextContains": [
+      "published",
+      "posted",
+      "đã đăng",
+      "đang đăng",
+      "chia sẻ",
+      "shared",
+      "success",
+      "đăng bài",
+      "processing"
+    ],
+    "assumeSuccessWhenComposerClosed": true,
+    "composerDialogSelectors": [
+      "[role=\"dialog\"][aria-modal=\"true\"] div[role=\"textbox\"]",
+      "[role=\"dialog\"][aria-modal=\"true\"] [contenteditable=\"true\"]",
+      "[role=\"dialog\"] [aria-label*=\"Tạo bài viết\"] [role=\"textbox\"]",
+      "[role=\"dialog\"] [aria-label*=\"Create post\"] [role=\"textbox\"]",
+      "[role=\"dialog\"] [aria-label*=\"Bài viết công khai\"] [role=\"textbox\"]",
+      "[role=\"dialog\"] [data-testid*=\"composer\"] [role=\"textbox\"]"
+    ],
+    "liveRegionSelectors": [
+      "[role=\"alert\"]",
+      "[role=\"status\"]",
+      "[aria-live]",
+      "[aria-live=\"polite\"]",
+      "[aria-live=\"assertive\"]",
+      "[data-testid*=\"toast\"]",
+      "[data-testid*=\"notice\"]"
+    ],
+    "pollDelaysMs": [2500, 2500, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000]
+  },
+  "loginSuccess": {
+    "sessionCookiePattern": "(?:^|;\\s*)c_user=",
+    "domSelectors": [
+      "[role=\"navigation\"]",
+      "[aria-label*=\"Facebook\"]",
+      "[data-pagelet=\"LeftRail\"]",
+      "[data-pagelet=\"FeedUnit\"]"
+    ]
+  },
+  "retryGuards": {
+    "composerOpenSubstrings": [
+      "cập nhật trạng thái",
+      "nghĩ gì",
+      "what's on your mind",
+      "thêm ảnh",
+      "ảnh/video",
+      "photo",
+      "add photo"
+    ],
+    "composerStepDenyCandidatePatterns": [
+      "(^text=đăng$|:text\\(\"đăng\"\\)|\\bđăng\\b|^(div|span):has-text\\()",
+      ":has-text\\(\\s*['\"]đăng['\"]\\)",
+      ":has-text\\(\\s*['\"]post['\"]\\)",
+      "has-text\\(\\s*['\"]đăng['\"]\\)",
+      "has-text\\(\\s*['\"]post['\"]\\)"
+    ],
+    "publishIntentSelectorPatterns": [
+      "has-text\\s*\\(\\s*['\"]đăng['\"]",
+      "has-text\\s*\\(\\s*['\"]post['\"]",
+      "aria-label\\s*=\\s*['\"]đăng['\"]",
+      "aria-label\\s*=\\s*['\"]post['\"]",
+      "aria-label\\s*\\*=\\s*['\"][^'\"]*post[^'\"]*['\"]",
+      "aria-label\\s*\\*=\\s*['\"][^'\"]*đăng[^'\"]*['\"]",
+      ":text\\s*\\(\\s*['\"]đăng['\"]",
+      ":text\\s*\\(\\s*['\"]post['\"]",
+      "text\\s*=\\s*['\"]đăng['\"]",
+      "text\\s*=\\s*['\"]post['\"]"
+    ]
+  }
+}

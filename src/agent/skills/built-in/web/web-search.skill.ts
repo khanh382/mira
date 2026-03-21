@@ -14,8 +14,16 @@ const PARAMETERS_SCHEMA = {
   type: 'object',
   properties: {
     query: { type: 'string', description: 'The search query' },
-    numResults: { type: 'number', description: 'Max results to return', default: 5 },
-    lang: { type: 'string', description: 'Language code (e.g. "vi", "en")', default: 'en' },
+    numResults: {
+      type: 'number',
+      description: 'Max results to return',
+      default: 5,
+    },
+    lang: {
+      type: 'string',
+      description: 'Language code (e.g. "vi", "en")',
+      default: 'en',
+    },
     timeFilter: {
       type: 'string',
       enum: ['day', 'week', 'month', 'year'],
@@ -68,19 +76,28 @@ export class WebSearchSkill implements ISkillRunner {
       if (braveKey) {
         return await this.searchWithBrave(
           query as string,
-          { numResults: numResults as number, lang: lang as string, safesearch: safesearch as string },
+          {
+            numResults: numResults as number,
+            lang: lang as string,
+            safesearch: safesearch as string,
+          },
           braveKey,
           start,
         );
       }
 
       if (perplexityKey) {
-        return await this.searchWithPerplexity(query as string, perplexityKey, start);
+        return await this.searchWithPerplexity(
+          query as string,
+          perplexityKey,
+          start,
+        );
       }
 
       return {
         success: false,
-        error: 'No search API key configured. Set BRAVE_API_KEY or PERPLEXITY_API_KEY.',
+        error:
+          'No search API key configured. Set BRAVE_API_KEY or PERPLEXITY_API_KEY.',
         metadata: { durationMs: Date.now() - start },
       };
     } catch (error) {
@@ -108,7 +125,9 @@ export class WebSearchSkill implements ISkillRunner {
 
     const response = await fetch(
       `https://api.search.brave.com/res/v1/web/search?${params}`,
-      { headers: { 'X-Subscription-Token': apiKey, Accept: 'application/json' } },
+      {
+        headers: { 'X-Subscription-Token': apiKey, Accept: 'application/json' },
+      },
     );
 
     if (!response.ok) {
@@ -147,7 +166,9 @@ export class WebSearchSkill implements ISkillRunner {
     });
 
     if (!response.ok) {
-      throw new Error(`Perplexity API ${response.status}: ${await response.text()}`);
+      throw new Error(
+        `Perplexity API ${response.status}: ${await response.text()}`,
+      );
     }
 
     const data = await response.json();

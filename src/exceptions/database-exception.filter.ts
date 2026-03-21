@@ -1,4 +1,9 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpStatus } from '@nestjs/common';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpStatus,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { QueryFailedError } from 'typeorm';
 
@@ -28,10 +33,12 @@ export class DatabaseExceptionFilter implements ExceptionFilter {
       return response.status(HttpStatus.BAD_REQUEST).json({
         statusCode: HttpStatus.BAD_REQUEST,
         message: 'Validation failed',
-        errors: [{
-          field,
-          message: 'Field is required'
-        }]
+        errors: [
+          {
+            field,
+            message: 'Field is required',
+          },
+        ],
       });
     }
 
@@ -41,4 +48,4 @@ export class DatabaseExceptionFilter implements ExceptionFilter {
       message: 'Internal server error',
     });
   }
-} 
+}

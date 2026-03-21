@@ -37,11 +37,7 @@ export function OnHook(
       methodName: String(propertyKey),
     });
 
-    Reflect.defineMetadata(
-      HOOK_HANDLER_METADATA,
-      existing,
-      target.constructor,
-    );
+    Reflect.defineMetadata(HOOK_HANDLER_METADATA, existing, target.constructor);
 
     return descriptor;
   };

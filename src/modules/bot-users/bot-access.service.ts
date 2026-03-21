@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
-import { BotAccessGrant, BotPlatform } from './entities/bot-access-grant.entity';
+import {
+  BotAccessGrant,
+  BotPlatform,
+} from './entities/bot-access-grant.entity';
 import { BotUser } from './entities/bot-user.entity';
 import { UsersService } from '../users/users.service';
 
@@ -29,12 +32,13 @@ export class BotAccessService {
     [BotPlatform.ZALO]: 'zaloId',
   };
 
-  private readonly platformToBotTokenField: Record<BotPlatform, keyof BotUser> = {
-    [BotPlatform.TELEGRAM]: 'telegramBotToken',
-    [BotPlatform.DISCORD]: 'discordBotToken',
-    [BotPlatform.SLACK]: 'slackBotToken',
-    [BotPlatform.ZALO]: 'zaloBotToken',
-  };
+  private readonly platformToBotTokenField: Record<BotPlatform, keyof BotUser> =
+    {
+      [BotPlatform.TELEGRAM]: 'telegramBotToken',
+      [BotPlatform.DISCORD]: 'discordBotToken',
+      [BotPlatform.SLACK]: 'slackBotToken',
+      [BotPlatform.ZALO]: 'zaloBotToken',
+    };
 
   constructor(
     @InjectRepository(BotAccessGrant)
@@ -133,15 +137,45 @@ export class BotAccessService {
 
     this.logger.log(
       `Access invite created: bot ${botUser.id}, platform ${platform}, ` +
-      `target ${platformUserId}, code ${code}`,
+        `target ${platformUserId}, code ${code}`,
     );
 
     return { code, grantId: saved.id };
   }
 
   /**
-   * Xác thực mã code — guest nhắn mã vào bot.
-   * Nếu match → đánh dấu verified, trả về true.
+   * Lấy mã chờ xác thực hiện có cho user này, nếu chưa có thì tạo mới.
+   * Dùng khi guest bị từ chối để hiển thị luôn mã theo kiểu OpenClaw.
+   */
+  async getOrCreatePendingInviteByBotToken(
+    botToken: string,
+    platform: BotPlatform,
+    platformUserId: string,
+  ): Promise<{ code: string; grantId: number } | null> {
+    const botUser = await this.findBotByToken(botToken, platform);
+    if (!botUser) return null;
+
+    const pending = await this.grantRepo
+      .createQueryBuilder('g')
+      .where('g.bu_id = :botUserId', { botUserId: botUser.id })
+      .andWhere('g.platform = :platform', { platform })
+      .andWhere('g.platform_user_id = :platformUserId', { platformUserId })
+      .andWhere('g.is_verified = false')
+      .andWhere('g.verification_code IS NOT NULL')
+      .andWhere("g.created_at >= (NOW() - INTERVAL '24 hours')")
+      .orderBy('g.created_at', 'DESC')
+      .getOne();
+
+    if (pending?.verificationCode) {
+      return { code: pending.verificationCode, grantId: pending.id };
+    }
+
+    return this.createInvite(botUser.userId, platform, platformUserId);
+  }
+
+  /**
+   * Legacy flow: guest tự nhắn mã để verify.
+   * Giữ lại cho tương thích, có áp dụng TTL 24 giờ.
    */
   async verifyCode(
     botToken: string,
@@ -152,15 +186,18 @@ export class BotAccessService {
     const botUser = await this.findBotByToken(botToken, platform);
     if (!botUser) return false;
 
-    const grant = await this.grantRepo.findOne({
-      where: {
-        botUserId: botUser.id,
-        platform,
-        platformUserId,
-        verificationCode: code.toUpperCase().trim(),
-        isVerified: false,
-      },
-    });
+    const grant = await this.grantRepo
+      .createQueryBuilder('g')
+      .where('g.bu_id = :botUserId', { botUserId: botUser.id })
+      .andWhere('g.platform = :platform', { platform })
+      .andWhere('g.platform_user_id = :platformUserId', { platformUserId })
+      .andWhere('g.verification_code = :code', {
+        code: code.toUpperCase().trim(),
+      })
+      .andWhere('g.is_verified = false')
+      .andWhere("g.created_at >= (NOW() - INTERVAL '24 hours')")
+      .orderBy('g.created_at', 'DESC')
+      .getOne();
 
     if (!grant) return false;
 
@@ -176,6 +213,64 @@ export class BotAccessService {
   }
 
   /**
+   * Owner duyệt thủ công theo code (OpenClaw-like manual approval).
+   * Chỉ mã chưa verify và còn hạn (24 giờ) mới được kích hoạt.
+   */
+  async approvePendingByCode(
+    ownerUid: number,
+    platform: BotPlatform,
+    code: string,
+  ): Promise<{ approved: boolean; platformUserId?: string; reason?: string }> {
+    const botUser = await this.botUserRepo.findOne({
+      where: { userId: ownerUid },
+    });
+    if (!botUser) return { approved: false, reason: 'bot_not_configured' };
+
+    const normalized = code.toUpperCase().trim();
+    const grant = await this.grantRepo
+      .createQueryBuilder('g')
+      .where('g.bu_id = :botUserId', { botUserId: botUser.id })
+      .andWhere('g.platform = :platform', { platform })
+      .andWhere('g.verification_code = :code', { code: normalized })
+      .andWhere('g.is_verified = false')
+      .andWhere("g.created_at >= (NOW() - INTERVAL '24 hours')")
+      .orderBy('g.created_at', 'DESC')
+      .getOne();
+
+    if (!grant) {
+      const anyGrant = await this.grantRepo
+        .createQueryBuilder('g')
+        .where('g.bu_id = :botUserId', { botUserId: botUser.id })
+        .andWhere('g.platform = :platform', { platform })
+        .andWhere('g.verification_code = :code', { code: normalized })
+        .orderBy('g.created_at', 'DESC')
+        .getOne();
+      if (!anyGrant) return { approved: false, reason: 'code_not_found' };
+      if (anyGrant.isVerified) {
+        return {
+          approved: false,
+          platformUserId: anyGrant.platformUserId,
+          reason: 'already_verified',
+        };
+      }
+      return {
+        approved: false,
+        platformUserId: anyGrant.platformUserId,
+        reason: 'expired',
+      };
+    }
+
+    grant.isVerified = true;
+    grant.verificationCode = null;
+    await this.grantRepo.save(grant);
+    return {
+      approved: true,
+      platformUserId: grant.platformUserId,
+      reason: 'approved',
+    };
+  }
+
+  /**
    * Thu hồi quyền truy cập.
    */
   async revokeAccess(grantId: number, ownerUid: number): Promise<boolean> {
@@ -184,6 +279,28 @@ export class BotAccessService {
       grantedBy: ownerUid,
     });
     return result.affected > 0;
+  }
+
+  /**
+   * Thu hồi quyền theo platformUserId (dễ dùng từ chat command/skill).
+   * Chỉ xóa grants thuộc bot của chính owner.
+   */
+  async revokeByPlatformUserId(
+    ownerUid: number,
+    platform: BotPlatform,
+    platformUserId: string,
+  ): Promise<boolean> {
+    const botUser = await this.botUserRepo.findOne({
+      where: { userId: ownerUid },
+    });
+    if (!botUser) return false;
+
+    const result = await this.grantRepo.delete({
+      botUserId: botUser.id,
+      platform,
+      platformUserId,
+    });
+    return (result.affected ?? 0) > 0;
   }
 
   /**

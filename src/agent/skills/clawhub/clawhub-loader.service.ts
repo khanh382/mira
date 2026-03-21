@@ -7,14 +7,19 @@ import {
   IClawhubSkillFrontmatter,
   IClawhubInstallResult,
 } from './interfaces/clawhub-skill.interface';
+import { DEFAULT_BRAIN_DIR } from '../../../config/brain-dir.config';
 
 /**
  * ClawhubLoaderService — load, parse và quản lý ClawhHub prompt-based skills.
  *
- * Skills được load từ nhiều nguồn (ưu tiên cao → thấp):
- * 1. workspace/skills/   — skills trong workspace hiện tại
- * 2. managed skills dir  — ~/.mira/skills/ (skills cài qua clawhub CLI)
- * 3. bundled skills      — skills đi kèm backend
+ * Skills được load từ nhiều nguồn (cùng tên skill: bản **sau** trong mảng ghi đè bản trước):
+ * bundled → (legacy ~/.mira/skills nếu khác primary) → managed primary → workspace/skills.
+ *
+ * **Cài đặt (`npx clawhub install`)** luôn ghi vào `managedInstallDir`:
+ * - `CLAWHUB_MANAGED_SKILLS_DIR` nếu set, hoặc
+ * - `BRAIN_DIR/clawhub_skills` (mặc định theo DEFAULT_BRAIN_DIR trong `brain-dir.config.ts`).
+ *
+ * Legacy `~/.mira/skills` vẫn được **đọc** nếu tồn tại và khác primary (để không mất skill cũ).
  *
  * Mỗi skill là 1 folder chứa SKILL.md với YAML frontmatter + markdown body.
  */
@@ -23,17 +28,54 @@ export class ClawhubLoaderService implements OnModuleInit {
   private readonly logger = new Logger(ClawhubLoaderService.name);
   private readonly skills = new Map<string, IClawhubSkillEntry>();
 
-  private readonly skillDirs: Array<{ dir: string; source: IClawhubSkillEntry['source'] }>;
+  private readonly skillDirs: Array<{
+    dir: string;
+    source: IClawhubSkillEntry['source'];
+  }>;
+
+  /** Thư mục dùng cho `npx clawhub install` (không dùng legacy ~/.mira). */
+  private readonly managedInstallDir: string;
 
   constructor(private readonly configService: ConfigService) {
     const home = process.env.HOME || process.env.USERPROFILE || '/tmp';
-    const workspaceDir = this.configService.get('AGENT_WORKSPACE', process.cwd());
+    const workspaceDir = this.configService.get(
+      'AGENT_WORKSPACE',
+      process.cwd(),
+    );
+
+    const brainDir = path.resolve(
+      this.configService.get('BRAIN_DIR', DEFAULT_BRAIN_DIR),
+    );
+    const explicitManaged = this.configService
+      .get<string>('CLAWHUB_MANAGED_SKILLS_DIR')
+      ?.trim();
+    const primaryManaged =
+      explicitManaged && explicitManaged.length > 0
+        ? path.resolve(explicitManaged)
+        : path.join(brainDir, 'clawhub_skills');
+
+    this.managedInstallDir = primaryManaged;
+
+    const legacyManaged = path.join(home, '.mira', 'skills');
 
     this.skillDirs = [
       { dir: path.join(__dirname, '../../../../skills'), source: 'bundled' },
-      { dir: path.join(home, '.mira', 'skills'), source: 'managed' },
-      { dir: path.join(workspaceDir, 'skills'), source: 'workspace' },
     ];
+    if (legacyManaged !== primaryManaged) {
+      this.skillDirs.push({ dir: legacyManaged, source: 'managed' });
+    }
+    this.skillDirs.push({ dir: primaryManaged, source: 'managed' });
+    this.skillDirs.push({
+      dir: path.join(workspaceDir, 'skills'),
+      source: 'workspace',
+    });
+
+    this.logger.log(
+      `Clawhub managed install dir: ${primaryManaged}` +
+        (legacyManaged !== primaryManaged
+          ? ` (legacy load: ${legacyManaged})`
+          : ''),
+    );
   }
 
   async onModuleInit() {
@@ -202,10 +244,7 @@ export class ClawhubLoaderService implements OnModuleInit {
     const { promisify } = await import('util');
     const execFileAsync = promisify(execFile);
 
-    const managedDir = this.skillDirs.find((d) => d.source === 'managed')?.dir;
-    if (!managedDir) {
-      return { success: false, error: 'Managed skills directory not configured' };
-    }
+    const managedDir = this.managedInstallDir;
 
     // Ensure dir exists
     fs.mkdirSync(managedDir, { recursive: true });
@@ -224,7 +263,10 @@ export class ClawhubLoaderService implements OnModuleInit {
         return { success: true, skill };
       }
 
-      return { success: false, error: `Skill "${skillName}" installed but not found after reload` };
+      return {
+        success: false,
+        error: `Skill "${skillName}" installed but not found after reload`,
+      };
     } catch (error: any) {
       return {
         success: false,

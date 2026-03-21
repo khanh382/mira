@@ -1,8 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HooksService } from '../../hooks/hooks.service';
-import { InternalHookEvent, PluginHookName } from '../../hooks/enums/hook-events.enum';
+import {
+  InternalHookEvent,
+  PluginHookName,
+} from '../../hooks/enums/hook-events.enum';
 import { ChannelsService } from '../../channels/channels.service';
-import { IPipelineContext, PipelineStage } from '../interfaces/pipeline-context.interface';
+import { StopAllService } from '../../control/stop-all.service';
+import {
+  IPipelineContext,
+  PipelineStage,
+} from '../interfaces/pipeline-context.interface';
 
 @Injectable()
 export class DeliverStep {
@@ -11,15 +18,31 @@ export class DeliverStep {
   constructor(
     private readonly hooksService: HooksService,
     private readonly channelsService: ChannelsService,
+    private readonly stopAllService: StopAllService,
   ) {}
 
   async execute(context: IPipelineContext): Promise<IPipelineContext> {
-    if (context.stage === PipelineStage.FAILED || !context.agentResponse) {
-      this.logger.warn(`[${context.runId}] Skipping delivery (stage: ${context.stage})`);
+    // If user requested STOP mid-flight, avoid delivering any further output
+    // (prevents "reading old messages" after the stop command).
+    if (this.stopAllService.isStoppedForUser(context.userId)) {
+      this.logger.warn(
+        `[${context.runId}] Skipping delivery because /stop is active`,
+      );
+      context.agentResponse = undefined;
+      context.stage = PipelineStage.AGENT_COMPLETED;
       return context;
     }
 
-    this.logger.debug(`[${context.runId}] Delivering response via ${context.targetChannelId}`);
+    if (context.stage === PipelineStage.FAILED || !context.agentResponse) {
+      this.logger.warn(
+        `[${context.runId}] Skipping delivery (stage: ${context.stage})`,
+      );
+      return context;
+    }
+
+    this.logger.debug(
+      `[${context.runId}] Delivering response via ${context.targetChannelId}`,
+    );
 
     const sendingContext = await this.hooksService.executePluginHook(
       PluginHookName.MESSAGE_SENDING,
@@ -48,10 +71,10 @@ export class DeliverStep {
       },
     });
 
-    await this.hooksService.executeVoidPluginHook(
-      PluginHookName.MESSAGE_SENT,
-      { channelId: context.targetChannelId, content: context.agentResponse },
-    );
+    await this.hooksService.executeVoidPluginHook(PluginHookName.MESSAGE_SENT, {
+      channelId: context.targetChannelId,
+      content: context.agentResponse,
+    });
 
     context.stage = PipelineStage.DELIVERED;
     context.completedAt = new Date();

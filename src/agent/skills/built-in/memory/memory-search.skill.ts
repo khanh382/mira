@@ -59,7 +59,11 @@ export class MemorySearchSkill implements ISkillRunner {
 
   async execute(context: ISkillExecutionContext): Promise<ISkillResult> {
     const start = Date.now();
-    const { query, maxResults = 5, minScore = 0.7 } = context.parameters as {
+    const {
+      query,
+      maxResults = 5,
+      minScore = 0.7,
+    } = context.parameters as {
       query: string;
       maxResults?: number;
       minScore?: number;
@@ -69,7 +73,8 @@ export class MemorySearchSkill implements ISkillRunner {
     if (!this.vectorization) {
       return {
         success: false,
-        error: 'VectorizationService not available. LearningModule may not be loaded.',
+        error:
+          'VectorizationService not available. LearningModule may not be loaded.',
         data: { query },
         metadata: { durationMs: Date.now() - start },
       };

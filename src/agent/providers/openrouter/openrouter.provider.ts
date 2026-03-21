@@ -66,6 +66,9 @@ export class OpenRouterProvider implements ILlmProvider {
           parameters: t.parameters,
         },
       }));
+      if (options.toolChoice && options.toolChoice !== 'auto') {
+        body.tool_choice = options.toolChoice;
+      }
     }
 
     const res = await fetch(OPENROUTER_API, {
@@ -82,7 +85,9 @@ export class OpenRouterProvider implements ILlmProvider {
     if (!res.ok) {
       const errorBody = await res.text();
       this.logger.error(`OpenRouter API error (${res.status}): ${errorBody}`);
-      throw new Error(`OpenRouter API error ${res.status}: ${errorBody.slice(0, 200)}`);
+      throw new Error(
+        `OpenRouter API error ${res.status}: ${errorBody.slice(0, 200)}`,
+      );
     }
 
     const data = (await res.json()) as any;

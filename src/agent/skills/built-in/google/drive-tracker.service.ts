@@ -30,7 +30,7 @@ interface DriveState {
  * DriveTrackerService — tự động ghi nhớ trạng thái Google Drive per-user.
  *
  * Lưu file GOOGLE_DRIVE.md trong workspace:
- *   heart/<identifier>/workspace/GOOGLE_DRIVE.md
+ *   $BRAIN_DIR/<identifier>/workspace/GOOGLE_DRIVE.md
  *
  * Được WorkspaceService.buildAgentSystemContext() đọc tự động
  * → agent luôn biết danh sách file/folder/sheet đang có & đã xóa.
@@ -43,6 +43,39 @@ export class DriveTrackerService {
     private readonly workspaceService: WorkspaceService,
     private readonly usersService: UsersService,
   ) {}
+
+  private normalizeName(s: string): string {
+    return String(s || '')
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+  }
+
+  /**
+   * Tìm spreadsheet đã được track trong workspace (cùng user) theo tên + optional parent.
+   * Dùng để tránh tạo nhiều file trùng khi agent gọi "create" nhiều lần.
+   */
+  async findTrackedSpreadsheetByName(
+    userId: number,
+    name: string,
+    parentId?: string,
+  ): Promise<TrackedResource | null> {
+    const user = await this.usersService.findById(userId);
+    if (!user) return null;
+
+    const state = this.loadState(user.identifier);
+    const targetNorm = this.normalizeName(name);
+    const pid = parentId ? String(parentId).trim() : undefined;
+
+    const found = state.resources.find((r) => {
+      if (r.type !== 'spreadsheet') return false;
+      if (pid && r.parentId !== pid) return false;
+      return this.normalizeName(r.name) === targetNorm;
+    });
+
+    return found ?? null;
+  }
 
   /**
    * Phân tích kết quả từ google_workspace skill
@@ -92,14 +125,19 @@ export class DriveTrackerService {
   private detectOperation(
     service: string,
     action: string,
-  ): { type: 'create' | 'update' | 'delete' | 'rename'; verb: string; args: string[] } | null {
+  ): {
+    type: 'create' | 'update' | 'delete' | 'rename';
+    verb: string;
+    args: string[];
+  } | null {
     const parts = action.trim().split(/\s+/);
     const verb = parts[0]?.toLowerCase();
     const args = parts.slice(1);
 
     if (service === 'sheets') {
       if (verb === 'create') return { type: 'create', verb, args };
-      if (verb === 'update' || verb === 'append') return { type: 'update', verb, args };
+      if (verb === 'update' || verb === 'append')
+        return { type: 'update', verb, args };
       if (verb === 'delete') return { type: 'delete', verb, args };
     }
 
@@ -114,10 +152,13 @@ export class DriveTrackerService {
     }
 
     if (service === 'drive') {
-      if (verb === 'mkdir' || verb === 'create') return { type: 'create', verb, args };
+      if (verb === 'mkdir' || verb === 'create')
+        return { type: 'create', verb, args };
       if (verb === 'upload') return { type: 'create', verb, args };
-      if (verb === 'rm' || verb === 'delete' || verb === 'trash') return { type: 'delete', verb, args };
-      if (verb === 'mv' || verb === 'rename') return { type: 'rename', verb, args };
+      if (verb === 'rm' || verb === 'delete' || verb === 'trash')
+        return { type: 'delete', verb, args };
+      if (verb === 'mv' || verb === 'rename')
+        return { type: 'rename', verb, args };
     }
 
     return null;
@@ -173,7 +214,9 @@ export class DriveTrackerService {
     state.deleted = state.deleted.filter((d) => d.id !== resource.id);
 
     state.resources.push(resource);
-    this.logger.debug(`Tracked new ${resource.type}: "${resource.name}" (${resource.id})`);
+    this.logger.debug(
+      `Tracked new ${resource.type}: "${resource.name}" (${resource.id})`,
+    );
   }
 
   private handleUpdate(
@@ -244,7 +287,10 @@ export class DriveTrackerService {
   // ─── State Persistence (Markdown) ────────────────────────
 
   private loadState(identifier: string): DriveState {
-    const content = this.workspaceService.readWorkspaceFile(identifier, TRACKER_FILE);
+    const content = this.workspaceService.readWorkspaceFile(
+      identifier,
+      TRACKER_FILE,
+    );
     if (!content) return { resources: [], deleted: [] };
 
     try {
@@ -286,7 +332,9 @@ export class DriveTrackerService {
             lines.push(`  - Sheets: ${item.sheets.join(', ')}`);
           }
 
-          lines.push(`  - Updated: ${item.updatedAt.slice(0, 16).replace('T', ' ')}`);
+          lines.push(
+            `  - Updated: ${item.updatedAt.slice(0, 16).replace('T', ' ')}`,
+          );
         }
         lines.push('');
       }
@@ -323,7 +371,10 @@ export class DriveTrackerService {
     );
   }
 
-  private extractName(data: Record<string, any>, args: string[]): string | null {
+  private extractName(
+    data: Record<string, any>,
+    args: string[],
+  ): string | null {
     if (data?.properties?.title) return data.properties.title;
     if (data?.title) return data.title;
     if (data?.name) return data.name;

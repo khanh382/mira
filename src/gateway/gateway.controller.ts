@@ -25,6 +25,7 @@ export class GatewayController {
       channelId: dto.channelId,
       model: dto.model,
       mediaUrl: dto.mediaUrl,
+      mediaPath: dto.mediaPath,
     });
   }
 
@@ -38,10 +39,7 @@ export class GatewayController {
 
   @Get('history')
   @UseGuards(JwtAuthGuard)
-  async getHistory(
-    @Req() req: any,
-    @Query('limit') limit?: string,
-  ) {
+  async getHistory(@Req() req: any, @Query('limit') limit?: string) {
     const userId = req.user.uid;
     return this.gatewayService.getHistory(
       userId,

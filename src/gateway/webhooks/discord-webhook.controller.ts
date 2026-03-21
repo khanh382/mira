@@ -82,7 +82,10 @@ export class DiscordWebhookController {
       if (verified) {
         return res.json({
           type: 4,
-          data: { content: '✅ Xác thực thành công! Bạn đã được cấp quyền truy cập bot.' },
+          data: {
+            content:
+              '✅ Xác thực thành công! Bạn đã được cấp quyền truy cập bot.',
+          },
         });
       }
     }
@@ -111,10 +114,16 @@ export class DiscordWebhookController {
       res.json({ type: 5 });
 
       try {
-        const result = await this.gatewayService.handleMessage(ownerUid, content, {
-          channelId: 'discord',
-          platform: ChatPlatform.DISCORD,
-        });
+        const result = await this.gatewayService.handleMessage(
+          ownerUid,
+          content,
+          {
+            channelId: 'discord',
+            platform: ChatPlatform.DISCORD,
+            dedupId: interactionId ? String(interactionId) : undefined,
+            discordUserId: discordUserId ? String(discordUserId) : undefined,
+          },
+        );
 
         if (result.response) {
           await this.deliveryService.sendDiscordFollowup(
@@ -133,16 +142,21 @@ export class DiscordWebhookController {
       }
     } else {
       const channelId = interaction?.channel_id || interaction?.channel?.id;
-      const stopTyping =
-        channelId
-          ? this.deliveryService.startDiscordTypingLoop(botToken, channelId)
-          : () => {};
+      const stopTyping = channelId
+        ? this.deliveryService.startDiscordTypingLoop(botToken, channelId)
+        : () => {};
 
       try {
-        const result = await this.gatewayService.handleMessage(ownerUid, content, {
-          channelId: 'discord',
-          platform: ChatPlatform.DISCORD,
-        });
+        const result = await this.gatewayService.handleMessage(
+          ownerUid,
+          content,
+          {
+            channelId: 'discord',
+            platform: ChatPlatform.DISCORD,
+            dedupId: interactionId ? String(interactionId) : undefined,
+            discordUserId: discordUserId ? String(discordUserId) : undefined,
+          },
+        );
 
         if (result.response && channelId) {
           await this.deliveryService.sendDiscordChannel(
@@ -189,6 +203,24 @@ export class DiscordWebhookController {
   }
 
   private extractContent(payload: any): string | null {
+    // Slash command (APPLICATION_COMMAND): map → /name … để gateway command-first khớp.
+    if (Number(payload?.type) === 2 && payload?.data?.name) {
+      const name = String(payload.data.name).trim();
+      const opts = payload.data.options;
+      if (Array.isArray(opts) && opts.length) {
+        const parts: string[] = [];
+        for (const o of opts) {
+          if (o?.value != null && String(o.value).trim() !== '') {
+            parts.push(String(o.value).trim());
+          }
+        }
+        if (parts.length) {
+          return `/${name} ${parts.join(' ')}`;
+        }
+      }
+      return `/${name}`;
+    }
+
     const optionValue = this.findFirstStringOption(payload?.data?.options);
     if (optionValue) return optionValue;
 

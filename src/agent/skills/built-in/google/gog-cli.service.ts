@@ -3,8 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { execFile, exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, mkdirSync, chmodSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { BotUsersService } from '../../../../modules/bot-users/bot-users.service';
+import { DEFAULT_BRAIN_DIR } from '../../../../config/brain-dir.config';
 
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
@@ -51,6 +52,36 @@ export class GogCliService implements OnModuleInit {
   private configDir: string;
   private ready = false;
 
+  private brainDirAbs(): string {
+    return resolve(this.configService.get('BRAIN_DIR', DEFAULT_BRAIN_DIR));
+  }
+
+  /**
+   * DB path policy:
+   * - New writes store brain-relative path: /<identifier>/workspace/google/console-cloud.json
+   * - Older rows may store absolute path: <brainDirAbs>/<identifier>/workspace/google/console-cloud.json
+   *
+   * This function always returns an absolute filesystem path.
+   */
+  private resolveBrainPath(storedPath: string): string {
+    const brainAbs = this.brainDirAbs().replace(/\\/g, '/');
+    const normalized = (storedPath || '').replace(/\\/g, '/').trim();
+    if (!normalized) return storedPath;
+
+    // Already absolute inside brainDir.
+    if (normalized.startsWith(brainAbs + '/')) return storedPath;
+
+    // New format: "/<identifier>/workspace/..."
+    const looksBrainRelative =
+      normalized.startsWith('/') && normalized.includes('/workspace/');
+    if (looksBrainRelative) {
+      return join(this.brainDirAbs(), normalized.slice(1));
+    }
+
+    // Fallback: treat as relative to brainDir.
+    return join(this.brainDirAbs(), normalized);
+  }
+
   constructor(
     private readonly configService: ConfigService,
     private readonly botUsersService: BotUsersService,
@@ -94,7 +125,8 @@ export class GogCliService implements OnModuleInit {
 
     this.logger.warn(
       'gogcli auto-install failed. Google Workspace skills unavailable. ' +
-      'Manual install: brew install gogcli OR build from ' + GOG_REPO,
+        'Manual install: brew install gogcli OR build from ' +
+        GOG_REPO,
     );
   }
 
@@ -158,10 +190,9 @@ export class GogCliService implements OnModuleInit {
 
       if (!existsSync(join(srcDir, '.git'))) {
         this.logger.log(`Cloning gogcli from ${GOG_REPO}...`);
-        await execAsync(
-          `git clone --depth 1 ${GOG_REPO} "${srcDir}"`,
-          { timeout: 60000 },
-        );
+        await execAsync(`git clone --depth 1 ${GOG_REPO} "${srcDir}"`, {
+          timeout: 60000,
+        });
       } else {
         this.logger.log('Updating gogcli source...');
         await execAsync('git pull --ff-only', {
@@ -201,14 +232,27 @@ export class GogCliService implements OnModuleInit {
     const botUser = await this.botUsersService.findByUserId(userId);
     if (!botUser?.googleConsoleCloudJsonPath) return null;
 
-    if (!existsSync(botUser.googleConsoleCloudJsonPath)) {
+    const credPath = this.resolveBrainPath(
+      botUser.googleConsoleCloudJsonPath,
+    );
+    if (!existsSync(credPath)) {
       this.logger.warn(
-        `Google credentials file not found: ${botUser.googleConsoleCloudJsonPath} (user ${userId})`,
+        `Google credentials file not found: ${credPath} (user ${userId})`,
       );
       return null;
     }
 
     return this.configService.get(`GOG_ACCOUNT_USER_${userId}`, null);
+  }
+
+  async getCredentialsPathForUser(userId: number): Promise<string | null> {
+    const botUser = await this.botUsersService.findByUserId(userId);
+    if (!botUser?.googleConsoleCloudJsonPath) return null;
+    const credPath = this.resolveBrainPath(
+      botUser.googleConsoleCloudJsonPath,
+    );
+    if (!existsSync(credPath)) return null;
+    return credPath;
   }
 
   async setupCredentials(
@@ -223,21 +267,113 @@ export class GogCliService implements OnModuleInit {
       };
     }
 
+    const credPath = this.resolveBrainPath(
+      botUser.googleConsoleCloudJsonPath,
+    );
     const credResult = await this.rawExec([
-      'auth', 'credentials', botUser.googleConsoleCloudJsonPath,
-      '--client', `user_${userId}`,
+      'auth',
+      'credentials',
+      credPath,
+      '--client',
+      `user_${userId}`,
     ]);
 
     if (!credResult.success) return credResult;
 
     const addResult = await this.rawExec([
-      '--client', `user_${userId}`,
-      'auth', 'add', email,
-      '--services', 'user',
+      '--client',
+      `user_${userId}`,
+      'auth',
+      'add',
+      email,
+      '--services',
+      'user',
       '--manual',
     ]);
 
     return addResult;
+  }
+
+  async setupCredentialsRemoteStep1(
+    userId: number,
+    email: string,
+  ): Promise<GogExecResult> {
+    const botUser = await this.botUsersService.findByUserId(userId);
+    if (!botUser?.googleConsoleCloudJsonPath) {
+      return {
+        success: false,
+        error: 'Google Console Cloud JSON path not configured for this user',
+      };
+    }
+
+    const credPath = this.resolveBrainPath(
+      botUser.googleConsoleCloudJsonPath,
+    );
+    const credResult = await this.rawExec([
+      'auth',
+      'credentials',
+      credPath,
+      '--client',
+      `user_${userId}`,
+    ]);
+    if (!credResult.success) return credResult;
+
+    // Remote Step 1: gog prints an authorization URL; user opens it and gets a redirect URL.
+    return this.rawExec([
+      '--client',
+      `user_${userId}`,
+      'auth',
+      'add',
+      email,
+      '--services',
+      'user',
+      '--remote',
+      '--step',
+      '1',
+    ]);
+  }
+
+  async setupCredentialsRemoteStep2(
+    userId: number,
+    email: string,
+    authUrl: string,
+  ): Promise<GogExecResult> {
+    const botUser = await this.botUsersService.findByUserId(userId);
+    if (!botUser?.googleConsoleCloudJsonPath) {
+      return {
+        success: false,
+        error: 'Google Console Cloud JSON path not configured for this user',
+      };
+    }
+
+    const credPath = this.resolveBrainPath(
+      botUser.googleConsoleCloudJsonPath,
+    );
+    // Ensure client credentials are present before Step 2.
+    const credResult = await this.rawExec([
+      'auth',
+      'credentials',
+      credPath,
+      '--client',
+      `user_${userId}`,
+    ]);
+    if (!credResult.success) return credResult;
+
+    // Remote Step 2: paste the full redirect URL (loopback) from the browser.
+    return this.rawExec([
+      '--client',
+      `user_${userId}`,
+      'auth',
+      'add',
+      email,
+      '--services',
+      'user',
+      '--remote',
+      '--step',
+      '2',
+      '--auth-url',
+      authUrl,
+    ]);
   }
 
   async exec(options: GogExecOptions): Promise<GogExecResult> {

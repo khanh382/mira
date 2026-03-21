@@ -9,10 +9,7 @@ import { BotBootstrapService } from './bot-bootstrap.service';
 import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([BotUser, BotAccessGrant]),
-    UsersModule,
-  ],
+  imports: [TypeOrmModule.forFeature([BotUser, BotAccessGrant]), UsersModule],
   providers: [
     BotUsersService,
     BotAccessService,

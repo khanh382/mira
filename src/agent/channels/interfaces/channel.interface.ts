@@ -28,7 +28,10 @@ export interface IInboundMessage {
   content: string;
   groupId?: string;
   threadId?: string;
+  /** Một file (tương thích cũ); thường trùng phần tử đầu của `mediaPaths`. */
   mediaPath?: string;
+  /** Nhiều file trong cùng một lượt (vd. album Telegram). */
+  mediaPaths?: string[];
   mediaUrl?: string;
   replyToMessageId?: string;
   raw?: Record<string, unknown>;

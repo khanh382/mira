@@ -13,7 +13,11 @@ import {
 const PARAMETERS_SCHEMA = {
   type: 'object',
   properties: {
-    includeInactive: { type: 'boolean', description: 'Include inactive threads', default: false },
+    includeInactive: {
+      type: 'boolean',
+      description: 'Include inactive threads',
+      default: false,
+    },
   },
 };
 

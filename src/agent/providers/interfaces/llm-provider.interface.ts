@@ -27,6 +27,11 @@ export interface ILlmRequestOptions {
   model: string;
   messages: ILlmMessage[];
   tools?: IToolDefinition[];
+  /**
+   * OpenAI-compatible: when "required", the model must emit at least one tool call.
+   * Used to recover models that answer with fake shell/commands instead of calling tools.
+   */
+  toolChoice?: 'auto' | 'none' | 'required';
   temperature?: number;
   maxTokens?: number;
   stream?: boolean;
@@ -60,7 +65,5 @@ export interface ILlmProvider {
 
   chat(options: ILlmRequestOptions): Promise<ILlmResponse>;
 
-  chatStream?(
-    options: ILlmRequestOptions,
-  ): AsyncIterable<ILlmStreamChunk>;
+  chatStream?(options: ILlmRequestOptions): AsyncIterable<ILlmStreamChunk>;
 }

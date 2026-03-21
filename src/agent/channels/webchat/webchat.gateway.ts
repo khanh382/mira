@@ -22,7 +22,10 @@ export class WebChatGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
   private readonly logger = new Logger(WebChatGateway.name);
-  private readonly connectedUsers = new Map<string, { userId: number; identifier: string }>();
+  private readonly connectedUsers = new Map<
+    string,
+    { userId: number; identifier: string }
+  >();
 
   @WebSocketServer()
   server: Server;
@@ -76,7 +79,17 @@ export class WebChatGateway
   @SubscribeMessage('message')
   async handleMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { content: string; model?: string },
+    @MessageBody()
+    payload: {
+      content: string;
+      model?: string;
+      /** URL công khai tới ảnh/file (nếu có) */
+      mediaUrl?: string;
+      /** Đường dẫn file trên server mà backend đã lưu sẵn (nâng cao) */
+      mediaPath?: string;
+      /** Nhiều file đã lưu trên server (cùng một lượt) */
+      mediaPaths?: string[];
+    },
   ) {
     const userInfo = this.connectedUsers.get(client.id);
     if (!userInfo) {
@@ -93,7 +106,13 @@ export class WebChatGateway
       const result = await this.gatewayService.handleMessage(
         userInfo.userId,
         payload.content,
-        { channelId: 'webchat', model: payload.model },
+        {
+          channelId: 'webchat',
+          model: payload.model,
+          mediaUrl: payload.mediaUrl,
+          mediaPath: payload.mediaPath,
+          mediaPaths: payload.mediaPaths,
+        },
       );
 
       client.emit('message:response', {

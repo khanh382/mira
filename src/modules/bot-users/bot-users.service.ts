@@ -23,4 +23,18 @@ export class BotUsersService {
     await this.botUserRepo.update(id, data);
     return this.botUserRepo.findOne({ where: { id } });
   }
+
+  async upsertGoogleCredentialsPath(
+    userId: number,
+    googleConsoleCloudJsonPath: string,
+  ): Promise<BotUser> {
+    const existing = await this.findByUserId(userId);
+    if (existing) {
+      return this.update(existing.id, { googleConsoleCloudJsonPath });
+    }
+    return this.create({
+      userId,
+      googleConsoleCloudJsonPath,
+    });
+  }
 }

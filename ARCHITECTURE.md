@@ -215,7 +215,9 @@ heart/
 │   ├── AGENTS.md
 │   ├── SOUL.md
 │   ├── TOOLS.md
+│   ├── PROCESSES.md                 ← Registry tiến trình / chọn tool theo ý user
 │   ├── HEARTBEAT.md
+│   ├── browser_dom_presets/           ← `<domain>.json` — preset retry click/type (một file / domain)
 │   └── skills/
 │
 ├── <user_identifier_A>/             ← Workspace riêng user A
@@ -225,6 +227,7 @@ heart/
 │   │   ├── IDENTITY.md              ← Riêng user
 │   │   ├── USER.md
 │   │   ├── TOOLS.md
+│   │   ├── PROCESSES.md             ← Optional override
 │   │   ├── HEARTBEAT.md
 │   │   ├── MEMORY.md                ← Long-term memory
 │   │   ├── GOOGLE_DRIVE.md          ← Auto-tracked Google resources
@@ -242,6 +245,8 @@ heart/
 - Khi đọc file → ưu tiên `heart/<identifier>/workspace/X.md` → fallback `heart/_shared/X.md`
 - Khi tạo workspace mới → copy templates từ `_shared/`
 - User có thể custom mọi thứ (SOUL, IDENTITY, skills) mà không ảnh hưởng user khác
+
+**Browser DOM presets:** `heart/_shared/browser_dom_presets/<domain>.json` — một file / domain; có thể ghi đè bằng `heart/<identifier>/browser_dom_presets/<domain>.json` (khi mount `heart/` ở nơi khác). Trong file: `click`/`type`, `scrollAssistBeforeRetry`, `publishVerification` (chuỗi toast/body sau khi đăng), `loginSuccess` (regex cookie + selector đã đăng nhập), `retryGuards` (regex nhận diện nút đăng vs composer). Runtime chỉ đọc file khớp URL; cache mtime; Facebook có fallback selector trong code nếu thiếu file.
 
 ---
 
@@ -739,7 +744,7 @@ interface ISkillRunner {
 
 Load từ 3 nguồn (priority thấp → cao):
 1. `backend/skills/` — bundled
-2. `~/.mira/skills/` — cài qua `clawhub install`
+2. `$BRAIN_DIR/clawhub_skills/` (mặc định) — cài qua `clawhub install`; có thể ghi đè bằng `CLAWHUB_MANAGED_SKILLS_DIR`. Legacy `~/.mira/skills/` vẫn được đọc nếu tồn tại và khác thư mục primary.
 3. `<workspace>/skills/` — riêng user
 
 ### Bảng tổng hợp Built-in Skills

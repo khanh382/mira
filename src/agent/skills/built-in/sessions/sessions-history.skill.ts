@@ -13,8 +13,15 @@ import {
 const PARAMETERS_SCHEMA = {
   type: 'object',
   properties: {
-    threadId: { type: 'string', description: 'Thread ID (UUID) to fetch history for' },
-    limit: { type: 'number', description: 'Max messages to return', default: 20 },
+    threadId: {
+      type: 'string',
+      description: 'Thread ID (UUID) to fetch history for',
+    },
+    limit: {
+      type: 'number',
+      description: 'Max messages to return',
+      default: 20,
+    },
     includeTools: {
       type: 'boolean',
       description: 'Include tool-role messages in output',

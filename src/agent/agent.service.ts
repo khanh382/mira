@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+  Optional,
+} from '@nestjs/common';
 import { HooksService } from './hooks/hooks.service';
 import { InternalHookEvent } from './hooks/enums/hook-events.enum';
 import { ChannelsService } from './channels/channels.service';
@@ -75,8 +81,12 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
 
     await this.hooksService.emitInternal(InternalHookEvent.GATEWAY_STARTUP, {
       context: {
-        channels: this.channelsService.listConfiguredChannels().map((c) => c.meta.id),
-        providers: this.providersService.listConfiguredProviders().map((p) => p.providerId),
+        channels: this.channelsService
+          .listConfiguredChannels()
+          .map((c) => c.meta.id),
+        providers: this.providersService
+          .listConfiguredProviders()
+          .map((p) => p.providerId),
         skills: this.skillsService.listAllSkills().map((s) => s.code),
       },
     });
@@ -86,13 +96,23 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     this.logger.log('Agent system shutting down...');
-    await this.hooksService.emitInternal(InternalHookEvent.GATEWAY_SHUTDOWN, {});
+    await this.hooksService.emitInternal(
+      InternalHookEvent.GATEWAY_SHUTDOWN,
+      {},
+    );
     await this.channelsService.shutdownAll();
   }
 
   async handleMessage(
     message: IInboundMessage,
-    options: { userId: number; threadId: string; model?: string },
+    options: {
+      userId: number;
+      threadId: string;
+      actorTelegramId?: string;
+      model?: string;
+      /** Gợi ý tool từ gateway (ví dụ /browser trong câu) → tier routing. */
+      skills?: string[];
+    },
   ) {
     return this.pipelineService.processMessage(message, options);
   }

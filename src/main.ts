@@ -11,9 +11,7 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
 
   // Lấy danh sách các domain từ biến môi trường, nếu không thì mặc định là localhost
-  const frontendUrls = configService
-    .get<string>('FRONTEND_URLS')
-    .split(','); // Tách các URL nếu có nhiều hơn 1 domain
+  const frontendUrls = configService.get<string>('FRONTEND_URLS').split(','); // Tách các URL nếu có nhiều hơn 1 domain
 
   const port = configService.get<number>('APP_PORT', 8080);
 
@@ -26,7 +24,9 @@ async function bootstrap() {
       }
 
       const isAllowed = frontendUrls.some((url) => {
-        const regex = new RegExp(`^https?://([a-z0-9-]+\.)?${url.replace('http://', '').replace('https://', '')}$`);
+        const regex = new RegExp(
+          `^https?://([a-z0-9-]+\.)?${url.replace('http://', '').replace('https://', '')}$`,
+        );
         return regex.test(origin);
       });
 

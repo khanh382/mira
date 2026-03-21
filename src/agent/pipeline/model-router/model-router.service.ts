@@ -9,6 +9,7 @@ import {
   ModelCandidate,
   MODEL_PRIORITY,
 } from './model-tier.enum';
+import { getSharedSkillsPathMentionRegex } from '../../../config/brain-dir.config';
 
 interface RoutingDecision {
   model: string;
@@ -22,7 +23,7 @@ interface RoutingDecision {
  *
  * 4-step routing:
  *   Bước 1 (Triage):    CHEAP  → DeepSeek-V3 / Gemini Flash
- *   Bước 2 (Tool Call):  SKILL  → Claude 3.5 Sonnet
+ *   Bước 2 (Tool Call):  SKILL  → DeepSeek-V3
  *   Bước 3 (Big Data):   PROCESSOR → Gemini 1.5 Flash (1M+ context)
  *   Bước 4 (Reasoning):  EXPERT → DeepSeek-R1 / GPT-4o
  *
@@ -79,7 +80,7 @@ export class ModelRouterService {
 
     this.logger.log(
       `Model router ready: providers=[${[...this.availableProviders].join(',')}], ` +
-      `openrouter=${this.hasOpenRouter}`,
+        `openrouter=${this.hasOpenRouter}`,
     );
   }
 
@@ -252,7 +253,12 @@ export class ModelRouterService {
     }
 
     // Fallback cuối: tìm BẤT KỲ model nào available, ưu tiên cheap
-    const allTiers = [ModelTier.CHEAP, ModelTier.SKILL, ModelTier.PROCESSOR, ModelTier.EXPERT];
+    const allTiers = [
+      ModelTier.CHEAP,
+      ModelTier.SKILL,
+      ModelTier.PROCESSOR,
+      ModelTier.EXPERT,
+    ];
     for (const fallbackTier of allTiers) {
       for (const candidate of MODEL_PRIORITY[fallbackTier]) {
         if (this.isModelAvailable(candidate)) {
@@ -267,7 +273,10 @@ export class ModelRouterService {
     }
 
     // Không có model nào → dùng DEFAULT_MODEL từ .env
-    const defaultModel = this.configService.get('DEFAULT_MODEL', 'openai/gpt-4o');
+    const defaultModel = this.configService.get(
+      'DEFAULT_MODEL',
+      'openai/gpt-4o',
+    );
     return {
       model: defaultModel,
       tier,
@@ -297,10 +306,40 @@ export class ModelRouterService {
     const lower = content.toLowerCase().trim();
     const wordCount = lower.split(/\s+/).length;
 
+    // Shared skills folder / skills_registry_manage — must use tools (not smalltalk).
+    const t = lower.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    const skillsRegistryIntent =
+      /\b(skills_registry|skill registry|skills registry)\b/.test(lower) ||
+      getSharedSkillsPathMentionRegex().test(lower) ||
+      /(trong\s+(db|database|sql)|\bdb\b|database|skills_registry)/i.test(
+        lower,
+      ) ||
+      /(liệt kê|liet ke|danh sách|danh sach).{0,40}\bskill/i.test(lower) ||
+      /(skill|skills).{0,30}(trong|trong db|trong database|trong bảng|trong thư mục)/i.test(
+        lower,
+      ) ||
+      /(sử\s*dụng|su\s*dung|thực\s*thi|thuc\s*thi|dùng|dung|chạy|chay|gọi|goi).{0,50}\bskill/i.test(
+        lower,
+      ) ||
+      /\bfacebook_post_status\b/i.test(lower) ||
+      /\brun_skill\b/i.test(lower) ||
+      /\bskill\b.{0,120}(template|tái\s*sử|dùng\s*lại|đóng\s*gói|dùng\s*chung|_shared)/i.test(
+        lower,
+      ) ||
+      /(template|tái\s*sử|dùng\s*lại|đóng\s*gói).{0,80}\bskill\b/i.test(lower) ||
+      /(tối\s*ưu|toi\s*u).{0,80}\bskill\b/i.test(lower) ||
+      /(tối\s*ưu|toi\s*u).{0,40}(thành|thanh).{0,20}template/i.test(lower) ||
+      (/\bbootstrap\b/i.test(lower) && /\bskill\b/i.test(lower)) ||
+      /\bskill\b.{0,120}\b(template|tai\s*su\s*dung|dung\s*lai|dong\s*goi)\b/i.test(t) ||
+      /\b(toi\s*uu|luu\s*skill|tao\s*skill|package\s*skill)\b/i.test(t);
+    if (skillsRegistryIntent) {
+      return IntentType.TOOL_CALL;
+    }
+
     // Greeting / smalltalk patterns
     const smalltalkPatterns = [
       /^(hi|hello|hey|xin chào|chào|ê|ơi|ok|thanks|cảm ơn|bye|tạm biệt)/,
-      /^(có gì mới|bạn khỏe|thời tiết|hôm nay)/,
+      /^(có gì mới|bạn khỏe)/,
     ];
     if (wordCount <= 5 && smalltalkPatterns.some((p) => p.test(lower))) {
       return IntentType.SMALLTALK;
@@ -308,15 +347,75 @@ export class ModelRouterService {
 
     // Tool/action keywords
     const toolKeywords = [
-      'gửi mail', 'gửi email', 'send email', 'gmail',
-      'lịch', 'calendar', 'cuộc họp', 'meeting',
-      'drive', 'upload', 'download', 'tải',
-      'sheet', 'spreadsheet', 'bảng tính',
-      'facebook', 'zalo', 'telegram', 'đăng bài', 'post',
-      'chạy lệnh', 'exec', 'terminal', 'command',
-      'trình duyệt', 'browser', 'mở web', 'screenshot',
-      'tìm kiếm', 'search', 'web',
-      'cron', 'lên lịch', 'tự động',
+      'skills_registry',
+      'skill registry',
+      'database',
+      'databas',
+      'trong db',
+      'trong database',
+      'liệt kê skill',
+      'liet ke skill',
+      'danh sách skill',
+      'danh sach skill',
+      'skill trong',
+      'dùng skill',
+      'dung skill',
+      'gửi mail',
+      'gửi email',
+      'send email',
+      'gmail',
+      'lịch',
+      'calendar',
+      'cuộc họp',
+      'meeting',
+      'drive',
+      'upload',
+      'download',
+      'tải',
+      'sheet',
+      'spreadsheet',
+      'bảng tính',
+      'facebook',
+      'zalo',
+      'telegram',
+      'đăng bài',
+      'post',
+      'chạy lệnh',
+      'exec',
+      'terminal',
+      'command',
+      'trình duyệt',
+      'browser',
+      'mở web',
+      'screenshot',
+      'tìm kiếm',
+      'search',
+      'web',
+      'cron',
+      'lên lịch',
+      'tự động',
+      // Weather / forecast requests
+      'thời tiết',
+      'thoi tiet',
+      'dự báo',
+      'du bao',
+      'weather',
+      'forecast',
+      // Delete / trash / destructive actions
+      'xóa',
+      'xoa',
+      'delete',
+      'remove',
+      'rm ',
+      'thùng rác',
+      'thung rac',
+      'trash',
+      'emptytrash',
+      'permanent',
+      'vinh vien',
+      'vĩnh viễn',
+      'dọn sạch',
+      'dọn rác',
     ];
     if (toolKeywords.some((kw) => lower.includes(kw))) {
       return IntentType.TOOL_CALL;
@@ -324,8 +423,14 @@ export class ModelRouterService {
 
     // Big data patterns
     const bigDataKeywords = [
-      'tóm tắt', 'summarize', 'đọc file', 'phân tích log',
-      'tất cả email', 'all emails', 'toàn bộ', 'hàng trăm',
+      'tóm tắt',
+      'summarize',
+      'đọc file',
+      'phân tích log',
+      'tất cả email',
+      'all emails',
+      'toàn bộ',
+      'hàng trăm',
     ];
     if (bigDataKeywords.some((kw) => lower.includes(kw))) {
       return IntentType.BIG_DATA;
@@ -333,10 +438,22 @@ export class ModelRouterService {
 
     // Reasoning patterns
     const reasoningKeywords = [
-      'lập kế hoạch', 'plan', 'chiến lược', 'strategy',
-      'so sánh', 'compare', 'phân tích', 'analyze',
-      'tại sao', 'why', 'giải thích', 'explain',
-      'thiết kế', 'design', 'kiến trúc', 'architecture',
+      'lập kế hoạch',
+      'plan',
+      'chiến lược',
+      'strategy',
+      'so sánh',
+      'compare',
+      'phân tích',
+      'analyze',
+      'tại sao',
+      'why',
+      'giải thích',
+      'explain',
+      'thiết kế',
+      'design',
+      'kiến trúc',
+      'architecture',
     ];
     if (reasoningKeywords.some((kw) => lower.includes(kw))) {
       return IntentType.REASONING;

@@ -11,9 +11,7 @@ export type InternalHookHandler = (
  * Plugin hook handler — có priority, chạy tuần tự, có thể modify data
  * Return data để chain sang handler tiếp theo, hoặc void nếu không modify
  */
-export type PluginHookHandler<T = unknown> = (
-  context: T,
-) => Promise<T | void>;
+export type PluginHookHandler<T = unknown> = (context: T) => Promise<T | void>;
 
 /**
  * Metadata đăng ký cho decorator @OnHook

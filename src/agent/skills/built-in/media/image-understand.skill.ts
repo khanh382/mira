@@ -59,7 +59,11 @@ export class ImageUnderstandSkill implements ISkillRunner {
 
   async execute(context: ISkillExecutionContext): Promise<ISkillResult> {
     const start = Date.now();
-    const { image, images, question = 'Describe this image in detail.' } = context.parameters;
+    const {
+      image,
+      images,
+      question = 'Describe this image in detail.',
+    } = context.parameters;
 
     const imageList: string[] = [];
     if (image) imageList.push(image as string);
@@ -79,7 +83,8 @@ export class ImageUnderstandSkill implements ISkillRunner {
     // gọi modelRouter.resolveModel(userId, TOOL_CALL) để lấy vision model
     return {
       success: false,
-      error: 'Image understanding requires a vision-capable LLM provider to be configured',
+      error:
+        'Image understanding requires a vision-capable LLM provider to be configured',
       data: { images: imageList, question },
       metadata: { durationMs: Date.now() - start },
     };

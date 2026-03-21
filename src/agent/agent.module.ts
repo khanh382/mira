@@ -9,6 +9,7 @@ import { LearningModule } from './learning/learning.module';
 import { GlobalConfigModule } from '../modules/global-config/global-config.module';
 import { AgentService } from './agent.service';
 import { AgentController } from './agent.controller';
+import { ControlModule } from './control/control.module';
 
 // Channel adapters
 import { TelegramChannel } from './channels/telegram/telegram.channel';
@@ -34,6 +35,7 @@ import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
     SchedulerModule,
     LearningModule,
     GlobalConfigModule,
+    ControlModule,
   ],
   controllers: [AgentController],
   providers: [
@@ -52,6 +54,6 @@ import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
     DeepSeekProvider,
     OpenRouterProvider,
   ],
-  exports: [AgentService, SkillsModule],
+  exports: [AgentService, SkillsModule, ControlModule],
 })
 export class AgentModule {}

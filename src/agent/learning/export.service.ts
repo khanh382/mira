@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ChatService } from '../../modules/chat/chat.service';
 import { ChatMessage } from '../../modules/chat/entities/chat-message.entity';
+import { DEFAULT_BRAIN_DIR } from '../../config/brain-dir.config';
 
 const BATCH_SIZE = 100;
 const MAX_BATCHES_PER_RUN = 50;
@@ -18,7 +19,7 @@ const MAX_BATCHES_PER_RUN = 50;
  * 3. Ghi ra file .jsonl theo format chuẩn fine-tune (OpenAI / Alpaca)
  * 4. Đánh dấu is_exported = true
  *
- * Output: heart/_exports/<userId>/YYYY-MM-DD.jsonl
+ * Output: $BRAIN_DIR/_exports/<userId>/YYYY-MM-DD.jsonl
  *
  * File .jsonl có thể dùng trực tiếp cho:
  * - OpenAI fine-tuning API
@@ -36,7 +37,7 @@ export class ExportService {
     private readonly configService: ConfigService,
   ) {
     this.brainDir = path.resolve(
-      this.configService.get('BRAIN_DIR', './heart'),
+      this.configService.get('BRAIN_DIR', DEFAULT_BRAIN_DIR),
     );
   }
 
@@ -44,7 +45,10 @@ export class ExportService {
    * 3h sáng mỗi ngày (UTC+7).
    * Chạy song song với vectorization — mỗi service có lock riêng.
    */
-  @Cron('0 0 3 * * *', { name: 'export_messages', timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('0 0 3 * * *', {
+    name: 'export_messages',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
   async runScheduled(): Promise<void> {
     await this.exportAll();
   }
@@ -141,24 +145,28 @@ export class ExportService {
 
     // Format 1: Raw messages (append mỗi message)
     for (const msg of messages) {
-      lines.push(JSON.stringify({
-        thread_id: threadId,
-        msg_id: msg.id,
-        role: msg.role,
-        content: msg.content,
-        tokens_used: msg.tokensUsed,
-        created_at: msg.createdAt.toISOString(),
-      }));
+      lines.push(
+        JSON.stringify({
+          thread_id: threadId,
+          msg_id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          tokens_used: msg.tokensUsed,
+          created_at: msg.createdAt.toISOString(),
+        }),
+      );
     }
 
     // Format 2: Conversation pairs (user→assistant) cho fine-tune
     const pairs = this.extractConversationPairs(messages);
     for (const pair of pairs) {
-      lines.push(JSON.stringify({
-        _type: 'training_pair',
-        thread_id: threadId,
-        messages: pair,
-      }));
+      lines.push(
+        JSON.stringify({
+          _type: 'training_pair',
+          thread_id: threadId,
+          messages: pair,
+        }),
+      );
     }
 
     fs.appendFileSync(filePath, lines.join('\n') + '\n');
@@ -204,7 +212,8 @@ export class ExportService {
   getExportFiles(userId: number): string[] {
     const dir = this.getExportDir(userId);
     if (!fs.existsSync(dir)) return [];
-    return fs.readdirSync(dir)
+    return fs
+      .readdirSync(dir)
       .filter((f) => f.endsWith('.jsonl'))
       .sort()
       .reverse();
