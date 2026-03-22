@@ -21,6 +21,7 @@ import {
   TASK_MEMORY_ASK_USER_AFTER_FAILED_STREAK,
 } from '../../../gateway/workspace/task-memory.service';
 import { getSharedSkillsPathMentionRegex } from '../../../config/brain-dir.config';
+import { IToolDefinitionForLLM } from '../../skills/interfaces/skill-runner.interface';
 
 const BIG_DATA_THRESHOLD = 50_000;
 /** Giới hạn độ dài nội dung tool đưa vào history LLM (tránh vỡ context 64k/128k). */
@@ -132,36 +133,49 @@ export class AgentRunStep {
     ];
 
     const toolUser = await this.usersService.findById(context.userId);
-    const ownerOnlyExcluded = toolUser?.level !== UserLevel.OWNER;
-    const allTools = this.skillsService.getToolDefinitionsForLLM({
-      excludeOwnerOnly: ownerOnlyExcluded,
-    });
-    // Không thu hẹp tool theo regex: agent chọn theo PROCESSES.md + mô tả tool (trừ lọc owner-only ở trên).
-    let tools = allTools;
+    let tools: IToolDefinitionForLLM[];
 
-    // Tool-choice: browser vs web_search mơ hồ → mặc định web_search; chỉ hỏi user khi
-    // task memory có failedRunStreak >= ngưỡng (cùng vấn đề đã thử đủ mà vẫn lỗi).
-    const tm = context.metadata['taskMemory'] as
-      | { mode?: string; failedRunStreak?: number }
-      | undefined;
-    const toolChoice = this.resolveAmbiguousWebToolChoice(
-      context.processedContent,
-      tools,
-      {
-        taskMemoryActive: tm?.mode === 'active',
-        failedRunStreak: tm?.failedRunStreak ?? 0,
-      },
-    );
-    if (toolChoice?.action === 'ask') {
-      context.agentResponse = toolChoice.message;
-      context.tokensUsed = 0;
-      return;
-    }
-    // If user explicitly chose one, narrow tools to that set.
-    if (toolChoice?.action === 'narrow') {
-      tools = tools.filter((t) =>
-        toolChoice.toolNames.includes(t.name),
+    if (toolUser?.level === UserLevel.CLIENT) {
+      tools = [];
+    } else {
+      const ownerOnlyExcluded = toolUser?.level !== UserLevel.OWNER;
+      tools = this.skillsService.getToolDefinitionsForLLM({
+        excludeOwnerOnly: ownerOnlyExcluded,
+      });
+
+      // User gõ rõ `/web_search` hoặc `/tool_web_search` (Telegram/chat) — ưu tiên đúng lệnh, không để
+      // model chọn `image_understand` chỉ vì có ảnh đính kèm (vision có thể chưa bật).
+      const pcForTools = context.processedContent ?? '';
+      const explicitSlashWebSearch =
+        /\/web_search\b/i.test(pcForTools) ||
+        /\/tool_web_search\b/i.test(pcForTools);
+      if (explicitSlashWebSearch && tools.some((t) => t.name === 'web_search')) {
+        tools = tools.filter((t) => t.name === 'web_search');
+      }
+
+      // Tool-choice: browser vs web_search mơ hồ → mặc định web_search; chỉ hỏi user khi
+      // task memory có failedRunStreak >= ngưỡng (cùng vấn đề đã thử đủ mà vẫn lỗi).
+      const tm = context.metadata['taskMemory'] as
+        | { mode?: string; failedRunStreak?: number }
+        | undefined;
+      const toolChoice = this.resolveAmbiguousWebToolChoice(
+        context.processedContent,
+        tools,
+        {
+          taskMemoryActive: tm?.mode === 'active',
+          failedRunStreak: tm?.failedRunStreak ?? 0,
+        },
       );
+      if (toolChoice?.action === 'ask') {
+        context.agentResponse = toolChoice.message;
+        context.tokensUsed = 0;
+        return;
+      }
+      if (toolChoice?.action === 'narrow') {
+        tools = tools.filter((t) =>
+          toolChoice.toolNames.includes(t.name),
+        );
+      }
     }
 
     // Combine current user message + selected history to detect intent on confirmation turns.
@@ -1265,6 +1279,29 @@ export class AgentRunStep {
   /** User yêu cầu xóa file nháp / debug browser trong $BRAIN_DIR/.../browser_debug. */
   private isLikelyBrowserDebugCleanupIntent(text: string): boolean {
     const raw = (text || '').toLowerCase();
+    const t = raw.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+    // Chỉ hỏi lệnh / cách / ví dụ — không coi là "yêu cầu thực thi xóa" (tránh ép tool khi naturalToolBehavior=false).
+    const wantsHowOrCommand =
+      /\b(lenh|lệnh)\b/.test(raw) ||
+      /\b(cach|cách)\b/.test(t) ||
+      /\b(huong\s*dan|hướng\s*dẫn)\b/.test(t) ||
+      /\b(lam\s*sao|làm\s*sao)\b/.test(t) ||
+      /\bhow\s*to\b/.test(raw) ||
+      /\bsyntax\b/.test(raw) ||
+      /\b(vi\s*du|ví\s*dụ)\b/.test(t) ||
+      /\b(hoi|hỏi)\s*(lenh|lệnh|cach|cách)\b/.test(t);
+    const giveMeCommand =
+      /\b(cho\s+anh|cho\s+em|xin|dua|đưa|chi|chỉ)\b/.test(t) &&
+      /\b(lenh|lệnh|cach|cách|huong\s*dan|hướng\s*dẫn)\b/.test(raw);
+    const explicitExecuteDelete =
+      /\b(xoa\s+giup|xóa\s+giúp|don\s+giup|dọn\s+giúp|xoa\s+ho|xóa\s+hộ|goi\s+tool|gọi\s+tool|chay\s+giup|chạy\s+giúp|thuc\s*hien|thực\s*hiện|deleteall|xoa\s+luon|xóa\s+luôn|xoa\s+het|xóa\s+hết|dọn\s+het|don\s+het|dọn\s+luôn|don\s+luon|thực\s*hiện\s*xóa|thuc\s*hien\s*xoa)\b/.test(
+        t,
+      );
+    if ((wantsHowOrCommand || giveMeCommand) && !explicitExecuteDelete) {
+      return false;
+    }
+
     const hasDelete = /xóa|xoa|delete|remove|dọn|don|clear|dọn sạch|don sach/i.test(raw);
     const hasBrowserTarget =
       /file\s*nháp|file\s*nhaps|file nháp|browser\s*debug|browser_debug|thư\s*mục\s*browser|thu\s*muc\s*browser|browser\s*folder/i.test(
@@ -1379,6 +1416,9 @@ export class AgentRunStep {
     if (hasExplicitNoWeb) return null;
 
     const hasWebIntent =
+      /\/web_search\b/.test(raw) ||
+      /\/tool_web_search\b/.test(raw) ||
+      /\bweb_search\b/.test(raw) ||
       /\b(tra\s*cuu|tra\s*cứu|tìm\s*kiếm|tim\s*kiem|search|web\s*search|browser|trình\s*duyệt|trinh\s*duyet|mở\s*web|mo\s*web|thông\s*tin\s*web|thong\s*tin\s*web)\b/i.test(
         raw,
       ) ||
@@ -1393,6 +1433,9 @@ export class AgentRunStep {
       /(dùng|dung)\s*browser/.test(raw);
 
     const wantsWebSearch =
+      /\/web_search\b/.test(raw) ||
+      /\/tool_web_search\b/.test(raw) ||
+      /\bweb_search\b/.test(raw) ||
       /\b(web\s*search|websearch|tìm\s*kiếm|tim\s*kiem|search)\b/.test(raw) ||
       /(tìm\s*dùm|tim\s*du?m)/.test(raw);
 

@@ -4,6 +4,7 @@ import {
   ResolvedThread,
 } from './session-resolver/session-resolver.service';
 import { WorkspaceService } from './workspace/workspace.service';
+import { SessionContextFocusService } from './workspace/session-context-focus.service';
 import { AgentService } from '../agent/agent.service';
 import { ChatService } from '../modules/chat/chat.service';
 import { SkillsService } from '../agent/skills/skills.service';
@@ -13,9 +14,13 @@ import { ChatPlatform } from '../modules/chat/entities/chat-thread.entity';
 import { IPipelineContext } from '../agent/pipeline/interfaces/pipeline-context.interface';
 import { ConfigService } from '@nestjs/config';
 import { StopAllService } from '../agent/control/stop-all.service';
-import { UserLevel } from '../modules/users/entities/user.entity';
+import { User, UserLevel } from '../modules/users/entities/user.entity';
+import { UsersService } from '../modules/users/users.service';
+import { ThreadsService } from '../modules/chat/threads.service';
+import { OpenclawChatService } from '../modules/openclaw-agents/openclaw-chat.service';
 import { createHash } from 'crypto';
 import { buildMenuHelpText } from '../modules/bot-users/bot-platform-menu';
+import { sanitizeLlmDisplayLeakage } from '../modules/bot-users/llm-output-sanitize';
 
 /**
  * GatewayService — trung tâm điều phối giữa entry points và agent pipeline.
@@ -75,6 +80,11 @@ export class GatewayService {
     'delete_skill',
     'update_skill',
     'tool',
+    'clean_media_incoming',
+    'brain_tree',
+    'brain_read',
+    'oa',
+    'agents',
   ]);
 
   private parseSimpleParams(input: string): Record<string, unknown> {
@@ -199,8 +209,16 @@ export class GatewayService {
     this.workspaceService.appendSessionEntry(user.identifier, threadId, {
       type: 'message',
       timestamp: new Date().toISOString(),
-      message: { role: 'assistant', content },
+      message: {
+        role: 'assistant',
+        content: sanitizeLlmDisplayLeakage(content),
+      },
       tokensUsed,
+    });
+    this.sessionContextFocusService.scheduleRefreshAfterAssistantMessage({
+      userId: user.uid,
+      identifier: user.identifier,
+      threadId,
     });
   }
 
@@ -210,14 +228,82 @@ export class GatewayService {
       userId: number;
       threadId: string;
       actorTelegramId?: string;
+      userIdentifier: string;
     },
   ): Promise<{ handled: true; response: string } | { handled: false }> {
     const text = (content || '').trim();
 
     if (!text.startsWith('/')) return { handled: false };
 
+    const isMenuOrBrainCommand =
+      /^\/menu(?:@\S+)?$/i.test(text) ||
+      /^\/brain_tree(?:@\S+)?$/i.test(text) ||
+      /^\/brain_read(?:@\S+)?(?:\s|$)/i.test(text);
+    if (isMenuOrBrainCommand) {
+      const u = await this.usersService.findById(context.userId);
+      if (u?.level === UserLevel.CLIENT) {
+        return {
+          handled: true,
+          response:
+            'Tài khoản client chỉ dùng để chat; không hỗ trợ /menu, /brain_tree hay /brain_read.',
+        };
+      }
+    }
+
     if (/^\/menu(?:@\S+)?$/i.test(text)) {
       return { handled: true, response: buildMenuHelpText() };
+    }
+
+    if (/^\/clean_media_incoming(?:@\S+)?$/i.test(text)) {
+      const result = await this.workspaceService.cleanUserMediaIncomingDir(
+        context.userIdentifier,
+      );
+      const loc = this.workspaceService.userBrainDisplayPath(
+        context.userIdentifier,
+        result.path,
+        { isDirectory: true },
+      );
+      const lines = [
+        result.removed === 0
+          ? 'Không có file hay thư mục con nào trong media/incoming.'
+          : `Đã xóa ${result.removed} mục trong thư mục media/incoming.`,
+        `Vị trí: ${loc}`,
+      ];
+      if (result.errors.length) {
+        lines.push('Lỗi một phần:', ...result.errors);
+      }
+      return { handled: true, response: lines.join('\n') };
+    }
+
+    if (/^\/brain_tree(?:@\S+)?$/i.test(text)) {
+      const out = await this.workspaceService.listUserBrainDirectoryTree(
+        context.userIdentifier,
+      );
+      return { handled: true, response: out };
+    }
+
+    const brainReadMatch = text.match(/^\/brain_read(?:@\S+)?(?:\s+([\s\S]*))?$/i);
+    if (brainReadMatch) {
+      const rel = (brainReadMatch[1] ?? '').trim();
+      const r = this.workspaceService.readUserBrainPath(
+        context.userIdentifier,
+        rel,
+      );
+      if (r.kind === 'error') {
+        return { handled: true, response: `❌ ${r.error}` };
+      }
+      if (r.kind === 'directory') {
+        return { handled: true, response: r.listing };
+      }
+      const displayPath = this.workspaceService.userBrainDisplayPath(
+        context.userIdentifier,
+        r.absolutePath,
+        { isDirectory: false },
+      );
+      return {
+        handled: true,
+        response: `File: ${displayPath}\n\n---\n${r.content}\n---`,
+      };
     }
 
     if (/^\/list_tools(?:@\S+)?$/i.test(text) || /^\/list_skills(?:@\S+)?$/i.test(text)) {
@@ -383,13 +469,17 @@ export class GatewayService {
   }
 
   constructor(
+    private readonly sessionContextFocusService: SessionContextFocusService,
     private readonly threadResolver: ThreadResolverService,
     private readonly workspaceService: WorkspaceService,
     private readonly agentService: AgentService,
     private readonly chatService: ChatService,
+    private readonly threadsService: ThreadsService,
+    private readonly openclawChatService: OpenclawChatService,
     private readonly skillsService: SkillsService,
     private readonly configService: ConfigService,
     private readonly stopAllService: StopAllService,
+    private readonly usersService: UsersService,
   ) {}
 
   /**
@@ -442,6 +532,41 @@ export class GatewayService {
     } catch {
       return { userTitle: 'bạn', botTitle: 'tôi' };
     }
+  }
+
+  /**
+   * OpenClaw chỉ dành cho chủ bot (cùng platform id với user); grantee không dùng được.
+   */
+  private isActorOwner(
+    user: User,
+    platform: ChatPlatform,
+    options?: {
+      telegramUserId?: string;
+      zaloUserId?: string;
+      discordUserId?: string;
+    },
+  ): boolean {
+    if (platform === ChatPlatform.WEB) return true;
+    if (platform === ChatPlatform.FACEBOOK) return true;
+    if (platform === ChatPlatform.TELEGRAM) {
+      const a = String(options?.telegramUserId ?? '').trim();
+      const o = String(user.telegramId ?? '').trim();
+      return !!a && !!o && a === o;
+    }
+    if (platform === ChatPlatform.ZALO) {
+      const a = String(options?.zaloUserId ?? '').trim();
+      const o = String(user.zaloId ?? '').trim();
+      return !!a && !!o && a === o;
+    }
+    if (platform === ChatPlatform.DISCORD) {
+      const a = String(options?.discordUserId ?? '').trim();
+      const o = String(user.discordId ?? '').trim();
+      return !!a && !!o && a === o;
+    }
+    if (platform === ChatPlatform.SLACK) {
+      return true;
+    }
+    return true;
   }
 
   async handleMessage(
@@ -679,6 +804,33 @@ export class GatewayService {
       }
     }
 
+    const fullThread =
+      (await this.threadsService.findById(thread.id)) ?? thread;
+
+    const actorOwner = this.isActorOwner(user, platform, options);
+    const ocSlash =
+      this.openclawChatService.isOpenclawSlashCommand(effectiveContent);
+
+    const inOpenclawChat =
+      !!fullThread.activeOpenclawAgentId && actorOwner && !ocSlash;
+
+    if (inOpenclawChat) {
+      const { userTitle, botTitle } = this.getHonorificsForUser(user.identifier);
+      const result = await this.openclawChatService.handleUserTurn({
+        user,
+        thread: fullThread,
+        platform,
+        effectiveContent,
+        honorifics: { userTitle, botTitle },
+      });
+      return {
+        response: result.response,
+        threadId: thread.id,
+        tokensUsed: 0,
+        runId: result.runId,
+      };
+    }
+
     await this.chatService.createMessage({
       threadId: thread.id,
       userId: user.uid,
@@ -699,6 +851,39 @@ export class GatewayService {
       timestamp: new Date().toISOString(),
       message: { role: 'user', content: effectiveContent },
     });
+
+    if (ocSlash && actorOwner) {
+      const slash = await this.openclawChatService.tryHandleSlashCommands({
+        user,
+        thread: fullThread,
+        platform,
+        text: effectiveContent,
+        telegramUserId: options?.telegramUserId,
+        zaloUserId: options?.zaloUserId,
+        discordUserId: options?.discordUserId,
+      });
+      if (slash.handled && slash.response !== undefined) {
+        await this.persistAssistantReply(user, thread.id, slash.response, 0);
+        return {
+          response: slash.response,
+          threadId: thread.id,
+          tokensUsed: 0,
+          runId: `openclaw-cmd-${Date.now()}`,
+        };
+      }
+    }
+
+    if (ocSlash && !actorOwner) {
+      const denied =
+        '⛔ Chỉ chủ tài khoản bot mới dùng lệnh OpenClaw (/agents, /oa ...).';
+      await this.persistAssistantReply(user, thread.id, denied, 0);
+      return {
+        response: denied,
+        threadId: thread.id,
+        tokensUsed: 0,
+        runId: `openclaw-denied-${Date.now()}`,
+      };
+    }
 
     // Dump request: if user asks to show "all messages" of the current session/thread,
     // return from DB directly to avoid the agent drifting into unrelated tool actions
@@ -756,7 +941,10 @@ export class GatewayService {
       this.workspaceService.appendSessionEntry(user.identifier, thread.id, {
         type: 'message',
         timestamp: new Date().toISOString(),
-        message: { role: 'assistant', content: response },
+        message: {
+          role: 'assistant',
+          content: sanitizeLlmDisplayLeakage(response),
+        },
         tokensUsed: 0,
       });
 
@@ -781,7 +969,10 @@ export class GatewayService {
         this.workspaceService.appendSessionEntry(user.identifier, thread.id, {
           type: 'message',
           timestamp: new Date().toISOString(),
-          message: { role: 'assistant', content: deniedText },
+          message: {
+            role: 'assistant',
+            content: sanitizeLlmDisplayLeakage(deniedText),
+          },
           tokensUsed: 0,
         });
         return {
@@ -799,7 +990,12 @@ export class GatewayService {
           user.identifier,
           thread.id,
         );
-        const assistantText = `✅ Đã tạo session mới. Lưu lịch sử tại:\n${jsonPath}`;
+        const jsonDisplay = this.workspaceService.userBrainDisplayPath(
+          user.identifier,
+          jsonPath,
+          { isDirectory: false },
+        );
+        const assistantText = `✅ Đã tạo session mới. Lưu lịch sử tại:\n${jsonDisplay}`;
 
         await this.chatService.createMessage({
           threadId: thread.id,
@@ -812,7 +1008,10 @@ export class GatewayService {
         this.workspaceService.appendSessionEntry(user.identifier, thread.id, {
           type: 'message',
           timestamp: new Date().toISOString(),
-          message: { role: 'assistant', content: assistantText },
+          message: {
+            role: 'assistant',
+            content: sanitizeLlmDisplayLeakage(assistantText),
+          },
           tokensUsed: 0,
         });
 
@@ -831,7 +1030,12 @@ export class GatewayService {
         `[GatewayService] Creating session note file: ${filePath}`,
       );
 
-      const assistantText = `✅ Đã tạo session note file mới tại:\n${filePath}`;
+      const noteDisplay = this.workspaceService.userBrainDisplayPath(
+        user.identifier,
+        filePath,
+        { isDirectory: false },
+      );
+      const assistantText = `✅ Đã tạo session note file mới tại:\n${noteDisplay}`;
 
       await this.chatService.createMessage({
         threadId: thread.id,
@@ -844,7 +1048,10 @@ export class GatewayService {
       this.workspaceService.appendSessionEntry(user.identifier, thread.id, {
         type: 'message',
         timestamp: new Date().toISOString(),
-        message: { role: 'assistant', content: assistantText },
+        message: {
+          role: 'assistant',
+          content: sanitizeLlmDisplayLeakage(assistantText),
+        },
         tokensUsed: 0,
       });
 
@@ -860,6 +1067,7 @@ export class GatewayService {
       userId: user.uid,
       threadId: thread.id,
       actorTelegramId: options?.telegramUserId,
+      userIdentifier: user.identifier,
     });
     if (commandFirst.handled) {
       await this.persistAssistantReply(user, thread.id, commandFirst.response, 0);
@@ -906,20 +1114,12 @@ export class GatewayService {
 
     const responseContent = pipelineResult.agentResponse || '';
     if (responseContent) {
-      await this.chatService.createMessage({
-        threadId: thread.id,
-        userId: user.uid,
-        role: MessageRole.ASSISTANT,
-        content: responseContent,
-        tokensUsed: pipelineResult.tokensUsed || 0,
-      });
-
-      this.workspaceService.appendSessionEntry(user.identifier, thread.id, {
-        type: 'message',
-        timestamp: new Date().toISOString(),
-        message: { role: 'assistant', content: responseContent },
-        tokensUsed: pipelineResult.tokensUsed || 0,
-      });
+      await this.persistAssistantReply(
+        user,
+        thread.id,
+        responseContent,
+        pipelineResult.tokensUsed || 0,
+      );
     }
 
     return {

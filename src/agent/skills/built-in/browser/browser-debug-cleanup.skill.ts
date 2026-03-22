@@ -47,8 +47,9 @@ const PARAMETERS_SCHEMA = {
   name: 'Browser Debug Cleanup',
   description:
     'Xóa file nháp / debug của browser (HTML, screenshot, skill_draft) trong $BRAIN_DIR/<identifier>/browser_debug. ' +
-    'Dùng skill này khi user yêu cầu "xóa file nháp browser", "xóa browser debug", "dọn thư mục browser". ' +
-    'deleteAll=true: xóa toàn bộ; groupId: xóa một nhóm cụ thể.',
+    'CHỈ gọi khi user yêu cầu **thực sự xóa / dọn** (vd. "xóa giúp", "dọn hộ", "gọi tool xóa", "xóa hết browser_debug"). ' +
+    'KHÔNG gọi khi user chỉ hỏi **lệnh**, **cách**, **hướng dẫn**, **syntax**, "cho anh lệnh xóa…" — khi đó chỉ trả lời bằng chữ (vd. `/tool_browser_debug_cleanup` + JSON, hoặc mô tả `deleteAll` / `groupId`). ' +
+    'deleteAll=true: xóa toàn bộ; groupId: xóa một nhóm cụ thể; dryRun=true: chỉ liệt kê.',
   category: SkillCategory.BROWSER,
   parametersSchema: PARAMETERS_SCHEMA,
   ownerOnly: true,
@@ -67,7 +68,7 @@ export class BrowserDebugCleanupSkill implements ISkillRunner {
       code: 'browser_debug_cleanup',
       name: 'Browser Debug Cleanup',
       description:
-        'Xóa file nháp/debug browser trong $BRAIN_DIR/<identifier>/browser_debug. deleteAll=true để xóa hết.',
+        'Xóa file nháp/debug trong $BRAIN_DIR/.../browser_debug. Chỉ khi user muốn **thực thi xóa**; nếu chỉ xin lệnh/cách → không gọi, trả lời hướng dẫn. deleteAll=true xóa hết; dryRun=true chỉ xem.',
       category: SkillCategory.BROWSER,
       type: SkillType.CODE,
       parametersSchema: PARAMETERS_SCHEMA,

@@ -55,6 +55,15 @@ export class RouteStep {
       }
     }
 
+    // Tiếp tục tác vụ (cùng thread): heuristic có thể trả SMALLTALK cho tin ngắn —
+    // vẫn cần TOOL_CALL để bật task memory và nối task đang mở.
+    if (
+      intent === IntentType.SMALLTALK &&
+      this.taskMemoryService.looksLikeContinuation(context.processedContent ?? '')
+    ) {
+      intent = IntentType.TOOL_CALL;
+    }
+
     // ─── Step 2: Xác định minModelTier từ active skills (nếu có) ──
     const skillTier = this.resolveSkillTier(context.activeSkills);
 

@@ -4,6 +4,7 @@ import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { SYSTEM_BOT_MENU_ENTRIES } from './bot-platform-menu';
+import { sanitizeAssistantOutboundPlainText } from './assistant-outbound-plain-text';
 
 const execFileAsync = promisify(execFile);
 
@@ -26,7 +27,10 @@ export class BotDeliveryService {
   ): Promise<boolean> {
     const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
 
-    const chunks = this.splitMessage(text, 4096);
+    const chunks = this.splitMessage(
+      sanitizeAssistantOutboundPlainText(text),
+      4096,
+    );
     for (const chunk of chunks) {
       try {
         // Plain text avoids Markdown parse errors (**, `, unclosed entities).
@@ -423,7 +427,10 @@ export class BotDeliveryService {
   ): Promise<boolean> {
     const url = `https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}`;
 
-    const chunks = this.splitMessage(text, 2000);
+    const chunks = this.splitMessage(
+      sanitizeAssistantOutboundPlainText(text),
+      2000,
+    );
     for (const chunk of chunks) {
       try {
         const res = await fetch(url, {
@@ -455,7 +462,10 @@ export class BotDeliveryService {
   ): Promise<boolean> {
     const url = `https://discord.com/api/v10/channels/${channelId}/messages`;
 
-    const chunks = this.splitMessage(text, 2000);
+    const chunks = this.splitMessage(
+      sanitizeAssistantOutboundPlainText(text),
+      2000,
+    );
     for (const chunk of chunks) {
       try {
         const res = await fetch(url, {
@@ -543,7 +553,10 @@ export class BotDeliveryService {
   ): Promise<boolean> {
     const url = 'https://openapi.zalo.me/v3.0/oa/message/cs';
 
-    const chunks = this.splitMessage(text, 2000);
+    const chunks = this.splitMessage(
+      sanitizeAssistantOutboundPlainText(text),
+      2000,
+    );
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       const isLast = i === chunks.length - 1;

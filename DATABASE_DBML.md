@@ -67,8 +67,12 @@ Table chat_threads {
   thread_id uuid [pk]
   uid integer [ref: > users.uid]
   platform enum('web', 'telegram', 'zalo', 'discord', 'slack', 'facebook') [default: 'web']
+  telegram_id varchar [null]
+  zalo_id varchar [null]
+  discord_id varchar [null]
   title varchar [null]
   is_active boolean [default: true]
+  active_openclaw_oa_id integer [null]
   created_at timestamp
   updated_at timestamp
 }
@@ -77,6 +81,9 @@ Table chat_messages {
   msg_id uuid [pk]
   thread_id uuid [ref: > chat_threads.thread_id]
   uid integer [ref: > users.uid]
+  telegram_id varchar [null]
+  zalo_id varchar [null]
+  discord_id varchar [null]
   role enum('system', 'user', 'assistant', 'tool')
   content text
   tokens_used integer [default: 0]
@@ -129,6 +136,50 @@ Table scheduled_tasks {
   created_at timestamp
   updated_at timestamp
 }
+
+Table openclaw_agents {
+  oa_id integer [pk, increment]
+  oa_name varchar
+  oa_uid integer [ref: > users.uid]
+  oa_domain varchar
+  oa_port varchar
+  oa_use_tls boolean [default: false]
+  oa_chat_path varchar [null]
+  oa_token_gateway varchar [null]
+  oa_password_gateway varchar [null]
+  oa_expertise text [null]
+  oa_status enum('active', 'disabled') [default: 'active']
+  oa_last_health_at timestamp [null]
+  oa_last_error text [null]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table openclaw_threads {
+  oct_id uuid [pk]
+  uid integer [ref: > users.uid]
+  oa_id integer [ref: > openclaw_agents.oa_id]
+  chat_thread_id uuid [ref: > chat_threads.thread_id, null]
+  openclaw_session_key varchar [null]
+  platform enum('web', 'telegram', 'zalo', 'discord', 'slack', 'facebook') [default: 'web']
+  telegram_id varchar [null]
+  zalo_id varchar [null]
+  discord_id varchar [null]
+  title varchar [null]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table openclaw_messages {
+  ocm_id uuid [pk]
+  oct_id uuid [ref: > openclaw_threads.oct_id]
+  uid integer [ref: > users.uid]
+  role enum('system', 'user', 'assistant', 'tool')
+  content text
+  oa_display_name varchar [null]
+  extra json [null]
+  created_at timestamp
+}
 ```
 
 ## Ghi chu
@@ -136,3 +187,6 @@ Table scheduled_tasks {
 - Bang `config` la global singleton (thuc te thuong chi co 1 dong).
 - `skills_registry.min_model_tier` map theo enum code: `cheap | skill | processor | expert`.
 - `scheduled_tasks.max_model_tier` hien dang de `varchar` trong entity (chua enum cứng).
+- `users.update_at` va `bot_users.update_at` (khong phai `updated_at`) dung ten cot nhu trong entity TypeORM.
+- `chat_threads` / `chat_messages`: cot `telegram_id`, `zalo_id`, `discord_id` map theo kenh (nullable).
+- OpenClaw (module `openclaw-agents`): luu dang ky Gateway user tu host; `openclaw_threads` / `openclaw_messages` tach khoi chat he thong. DDL tham khao `src/modules/openclaw-agents/schema.sql`.

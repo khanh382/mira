@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DiscoveryService } from '@nestjs/core';
@@ -12,6 +13,8 @@ import {
 } from './interfaces/skill-runner.interface';
 import { SKILL_METADATA, SkillMetadata } from './decorators/skill.decorator';
 import { ClawhubLoaderService } from './clawhub/clawhub-loader.service';
+import { UsersService } from '../../modules/users/users.service';
+import { UserLevel } from '../../modules/users/entities/user.entity';
 
 /**
  * SkillsService — unified registry cho cả code-based và prompt-based skills.
@@ -32,6 +35,8 @@ export class SkillsService implements OnModuleInit {
     private readonly skillRepo: Repository<Skill>,
     private readonly discoveryService: DiscoveryService,
     private readonly clawhubLoader: ClawhubLoaderService,
+    private readonly usersService: UsersService,
+    private readonly configService: ConfigService,
   ) {}
 
   async onModuleInit() {
@@ -127,13 +132,55 @@ export class SkillsService implements OnModuleInit {
       parameters: Record<string, unknown>;
     },
   ) {
+    const start = Date.now();
+    const user = await this.usersService.findById(context.userId);
+    if (user?.level === UserLevel.CLIENT) {
+      return {
+        success: false,
+        error:
+          'Tài khoản client chỉ dùng chat; không được gọi tool/skill code. ' +
+          'Cần quyền colleague hoặc owner.',
+        metadata: { durationMs: Date.now() - start },
+      };
+    }
+
     const runner = this.getRunner(skillCode);
     if (!runner) {
       throw new Error(
         `Skill "${skillCode}" not found or is a prompt-only skill`,
       );
     }
-    return runner.execute(context);
+
+    const timeoutMs = Number(
+      this.configService.get('SKILL_EXEC_TIMEOUT_MS', 30000),
+    );
+    const budget = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000;
+
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        resolve({
+          success: false,
+          error:
+            `Tool bị timeout sau ${budget}ms — hãy thử cách khác hoặc báo lại cho user.`,
+          metadata: { durationMs: Date.now() - start, timedOut: true },
+        });
+      }, budget);
+
+      runner
+        .execute(context)
+        .then((result) => {
+          clearTimeout(t);
+          resolve(result);
+        })
+        .catch((err: Error) => {
+          clearTimeout(t);
+          resolve({
+            success: false,
+            error: err?.message ?? String(err),
+            metadata: { durationMs: Date.now() - start },
+          });
+        });
+    });
   }
 
   // ─── ClawhHub Operations ───────────────────────────────────────────

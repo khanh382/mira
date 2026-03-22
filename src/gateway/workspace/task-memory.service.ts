@@ -4,6 +4,7 @@ import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { WorkspaceService } from './workspace.service';
 import { UsersService } from '../../modules/users/users.service';
+import { UserLevel } from '../../modules/users/entities/user.entity';
 import { IntentType } from '../../agent/pipeline/model-router/model-tier.enum';
 
 const INDEX_FILENAME = '_tasks_index.json';
@@ -201,6 +202,11 @@ export class TaskMemoryService {
       return;
     }
 
+    if (user.level === UserLevel.CLIENT) {
+      context.metadata['taskMemory'] = { mode: 'off' as const };
+      return;
+    }
+
     const identifier = user.identifier;
     const threadId = context.threadId;
     const root = this.getThreadTasksRoot(identifier, threadId);
@@ -270,9 +276,15 @@ export class TaskMemoryService {
    */
   async recordAfterAgentRun(context: {
     runId: string;
+    userId: number;
     metadata: Record<string, unknown>;
     agentToolCalls?: Array<{ skillCode: string; result: unknown }>;
   }): Promise<void> {
+    const actor = await this.usersService.findById(context.userId);
+    if (actor?.level === UserLevel.CLIENT) {
+      return;
+    }
+
     const tm = context.metadata['taskMemory'] as
       | {
           mode: string;

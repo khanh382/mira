@@ -301,6 +301,7 @@ export class ModelRouterService {
    * - Tin nhắn ngắn + không keyword tool → SMALLTALK
    * - Có keyword tool/action → TOOL_CALL
    * - Yêu cầu phân tích/lập kế hoạch phức tạp → REASONING
+   * - Văn dài không rõ → SMALLTALK (tránh bật task memory / giả định tool oan)
    */
   classifyIntentHeuristic(content: string): IntentType {
     const lower = content.toLowerCase().trim();
@@ -345,8 +346,8 @@ export class ModelRouterService {
       return IntentType.SMALLTALK;
     }
 
-    // Tool/action keywords
-    const toolKeywords = [
+    // Tool/action keywords (cụm tiếng Việt / token dài — dùng includes)
+    const toolPhraseKeywords = [
       'skills_registry',
       'skill registry',
       'database',
@@ -379,21 +380,19 @@ export class ModelRouterService {
       'zalo',
       'telegram',
       'đăng bài',
-      'post',
       'chạy lệnh',
-      'exec',
-      'terminal',
-      'command',
       'trình duyệt',
       'browser',
       'mở web',
+      'trang web',
       'screenshot',
       'tìm kiếm',
-      'search',
-      'web',
+      'tim kiem',
       'cron',
       'lên lịch',
+      'len lich',
       'tự động',
+      'tu dong',
       // Weather / forecast requests
       'thời tiết',
       'thoi tiet',
@@ -406,7 +405,6 @@ export class ModelRouterService {
       'xoa',
       'delete',
       'remove',
-      'rm ',
       'thùng rác',
       'thung rac',
       'trash',
@@ -417,7 +415,24 @@ export class ModelRouterService {
       'dọn sạch',
       'dọn rác',
     ];
-    if (toolKeywords.some((kw) => lower.includes(kw))) {
+    // Tiếng Anh ngắn: tránh includes (vd. "web" → website, "post" → postpone, "exec" → execute)
+    const toolWordRegexes = [
+      /\bweb\s*search\b/i,
+      /\bweb_search\b/i,
+      /\/web_search\b/i,
+      /\/tool_web_search\b/i,
+      /\bsearch\b/i,
+      /\bpost\b/i,
+      /\bexec\b/i,
+      /\bterminal\b/i,
+      /\bcommand\b/i,
+      /\brm\b/i,
+      /\brm\s+/i,
+    ];
+    if (
+      toolPhraseKeywords.some((kw) => lower.includes(kw)) ||
+      toolWordRegexes.some((re) => re.test(lower))
+    ) {
       return IntentType.TOOL_CALL;
     }
 
@@ -436,26 +451,31 @@ export class ModelRouterService {
       return IntentType.BIG_DATA;
     }
 
-    // Reasoning patterns
-    const reasoningKeywords = [
+    // Reasoning patterns (từ tiếng Anh ngắn: boundary để tránh "plane" → plan)
+    const reasoningPhrases = [
       'lập kế hoạch',
-      'plan',
       'chiến lược',
       'strategy',
       'so sánh',
-      'compare',
       'phân tích',
-      'analyze',
       'tại sao',
-      'why',
       'giải thích',
-      'explain',
       'thiết kế',
-      'design',
       'kiến trúc',
       'architecture',
     ];
-    if (reasoningKeywords.some((kw) => lower.includes(kw))) {
+    const reasoningWordRegexes = [
+      /\bplan\b/i,
+      /\bcompare\b/i,
+      /\banalyze\b/i,
+      /\bwhy\b/i,
+      /\bexplain\b/i,
+      /\bdesign\b/i,
+    ];
+    if (
+      reasoningPhrases.some((kw) => lower.includes(kw)) ||
+      reasoningWordRegexes.some((re) => re.test(lower))
+    ) {
       return IntentType.REASONING;
     }
 
@@ -464,7 +484,9 @@ export class ModelRouterService {
       return IntentType.SMALLTALK;
     }
 
-    // Default: coi như cần tool
-    return IntentType.TOOL_CALL;
+    // Văn dài nhưng không có tín hiệu tool/reasoning/big-data: coi là hội thoại thường.
+    // (Mặc định TOOL_CALL trước đây khiến mọi đoạn chat dài đều bật task memory — sai.)
+    // Agent vẫn nhận đủ tool definitions ở agent-run; chỉ routing tier / task memory đổi.
+    return IntentType.SMALLTALK;
   }
 }

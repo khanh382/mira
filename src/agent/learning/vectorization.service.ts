@@ -9,6 +9,10 @@ import { DEFAULT_BRAIN_DIR } from '../../config/brain-dir.config';
 const BATCH_SIZE = 50;
 const MAX_BATCHES_PER_RUN = 20;
 
+function yieldEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 export interface IEmbeddingResult {
   id: string;
   vector: number[];
@@ -45,7 +49,12 @@ export class VectorizationService {
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async runScheduled(): Promise<void> {
-    await this.vectorizeAll();
+    // Không chặn callback cron; tách sang tick sau để nhường event loop chính.
+    setImmediate(() => {
+      void this.vectorizeAll().catch((e) =>
+        this.logger.error(`Vectorization (deferred) failed: ${e?.message}`, e),
+      );
+    });
   }
 
   async vectorizeAll(): Promise<{ processed: number; batches: number }> {
@@ -78,6 +87,7 @@ export class VectorizationService {
         this.logger.debug(
           `Vectorize batch ${batchCount}: ${count}/${messages.length} messages`,
         );
+        await yieldEventLoop();
       }
 
       if (totalProcessed > 0) {
@@ -229,17 +239,17 @@ export class VectorizationService {
     }>,
   ): Promise<void> {
     const vectorDir = this.getVectorDir();
-    const fs = await import('fs');
+    const fs = await import('fs/promises');
     const path = await import('path');
 
-    fs.mkdirSync(vectorDir, { recursive: true });
+    await fs.mkdir(vectorDir, { recursive: true });
 
     for (const entry of entries) {
       const userDir = path.join(vectorDir, String(entry.userId));
-      fs.mkdirSync(userDir, { recursive: true });
+      await fs.mkdir(userDir, { recursive: true });
 
       const filePath = path.join(userDir, `${entry.id}.json`);
-      fs.writeFileSync(
+      await fs.writeFile(
         filePath,
         JSON.stringify({
           id: entry.id,

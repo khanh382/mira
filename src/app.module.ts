@@ -12,6 +12,7 @@ import { UsersModule } from './modules/users/users.module';
 import { BotUsersModule } from './modules/bot-users/bot-users.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { GlobalConfigModule } from './modules/global-config/global-config.module';
+import { OpenclawAgentsModule } from './modules/openclaw-agents/openclaw-agents.module';
 
 // Agent System
 import { AgentModule } from './agent/agent.module';
@@ -54,7 +55,13 @@ const getImports = () => {
       }),
     );
 
-    imports.push(UsersModule, BotUsersModule, ChatModule, GlobalConfigModule);
+    imports.push(
+      UsersModule,
+      BotUsersModule,
+      ChatModule,
+      GlobalConfigModule,
+      OpenclawAgentsModule,
+    );
 
     console.log(
       '✅ Database configuration detected - TypeORM will be initialized',

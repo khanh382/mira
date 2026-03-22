@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { HooksService } from '../../hooks/hooks.service';
 import {
   InternalHookEvent,
@@ -12,13 +13,17 @@ import { ILlmMessage } from '../../providers/interfaces/llm-provider.interface';
 import { ChatService } from '../../../modules/chat/chat.service';
 import { UsersService } from '../../../modules/users/users.service';
 import { WorkspaceService } from '../../../gateway/workspace/workspace.service';
+import { SessionContextFocusService } from '../../../gateway/workspace/session-context-focus.service';
 
-const HISTORY_LIMIT = 15;
+const DEFAULT_HISTORY_LIMIT = 30;
+const MAX_HISTORY_LIMIT_CAP = 120;
 const MIN_CURRENT_TOKENS_FOR_PRUNE = 3;
-// Similarity heuristic: if the current message shares too few keywords with the
-// last user message in history, we treat it as a "new topic" turn.
+// Similarity heuristic: if the current message shares too few keywords with
+// recent turns (user + assistant), we treat it as a "new topic" turn.
 // Higher threshold => prune more aggressively when topic likely changed.
 const TOPIC_JACCARD_THRESHOLD = 0.1;
+/** Số tin user+assistant gần nhất dùng để tính overlap (tránh chỉ so với 1 tin user). */
+const TOPIC_OVERLAP_RECENT_MESSAGES = 10;
 
 @Injectable()
 export class PreprocessStep {
@@ -29,6 +34,8 @@ export class PreprocessStep {
     private readonly chatService: ChatService,
     private readonly usersService: UsersService,
     private readonly workspaceService: WorkspaceService,
+    private readonly configService: ConfigService,
+    private readonly sessionContextFocusService: SessionContextFocusService,
   ) {}
 
   async execute(context: IPipelineContext): Promise<IPipelineContext> {
@@ -40,19 +47,29 @@ export class PreprocessStep {
     // ─── 2. Load recent conversation history from DB ──────
     await this.loadConversationHistory(context);
 
+    await this.appendSessionFocusToSystemContext(context);
+
     // Gợi ý tool khi có file đính kèm (đường dẫn thường đã nằm trong content từ gateway)
     const hasLocalMedia =
       Boolean(context.mediaPath) ||
       Boolean(context.mediaUrl) ||
       (context.mediaPaths?.length ?? 0) > 0;
     if (hasLocalMedia) {
-      const hint =
-        '\n\n[Hệ thống] Có file/URL đính kèm — khi cần hãy gọi tool thật: ' +
-        '`pdf_read` cho PDF, `image_understand` cho ảnh (khi vision đã bật), ' +
-        '`file_read` cho json/txt/md/csv/log theo đường dẫn tuyệt đối trên server, ' +
-        'hoặc `exec` để xử lý file khi phù hợp; không bịa kết quả đọc file.';
+      const explicitWebSearch =
+        /\/web_search\b/i.test(context.processedContent) ||
+        /\/tool_web_search\b/i.test(context.processedContent);
+      const hint = explicitWebSearch
+        ? '\n\n[Hệ thống] Có file đính kèm nhưng user đã gõ `/web_search` — chỉ gọi tool `web_search` với `query` lấy từ **phần chữ** của tin (vd. triệu chứng / câu hỏi). ' +
+          'Không gọi `image_understand` trừ khi vision đã hoạt động; ảnh không gửi được vào Google/Brave như query.'
+        : '\n\n[Hệ thống] Có file/URL đính kèm — khi cần hãy gọi tool thật: ' +
+          '`pdf_read` cho PDF, `image_understand` cho ảnh (khi vision đã bật), ' +
+          '`file_read` cho json/txt/md/csv/log theo đường dẫn tuyệt đối trên server, ' +
+          'hoặc `exec` để xử lý file khi phù hợp; không bịa kết quả đọc file.';
       if (
-        !context.processedContent.includes('[Hệ thống] Có file/URL đính kèm')
+        !context.processedContent.includes('[Hệ thống] Có file/URL đính kèm') &&
+        !context.processedContent.includes(
+          '[Hệ thống] Có file đính kèm nhưng user đã gõ',
+        )
       ) {
         context.processedContent += hint;
       }
@@ -132,9 +149,10 @@ export class PreprocessStep {
     context: IPipelineContext,
   ): Promise<void> {
     try {
+      const historyLimit = this.resolveHistoryLimit();
       const recentMessages = await this.chatService.getRecentMessages(
         context.threadId,
-        HISTORY_LIMIT,
+        historyLimit,
       );
 
       if (recentMessages.length === 0) return;
@@ -157,13 +175,46 @@ export class PreprocessStep {
       this.maybePruneIrrelevantHistory(context, historyMessages);
 
       this.logger.debug(
-        `[${context.runId}] Loaded ${historyMessages.length} history messages from thread ${context.threadId}`,
+        `[${context.runId}] Loaded ${historyMessages.length} history messages (limit=${historyLimit}) from thread ${context.threadId}`,
       );
     } catch (error) {
       this.logger.warn(
         `[${context.runId}] Failed to load conversation history: ${error.message}`,
       );
     }
+  }
+
+  /**
+   * Nối tóm tắt nền theo session (file `sessions/<thread>/context_focus.json`) vào system prompt đầu tiên.
+   */
+  private async appendSessionFocusToSystemContext(
+    context: IPipelineContext,
+  ): Promise<void> {
+    if (!this.sessionContextFocusService.isEnabled()) return;
+    try {
+      const user = await this.usersService.findById(context.userId);
+      if (!user?.identifier) return;
+      const block = this.sessionContextFocusService.readFocusBlockForPrompt(
+        user.identifier,
+        context.threadId,
+      );
+      if (!block) return;
+      const first = context.conversationHistory[0];
+      if (first?.role !== 'system' || !first.content) return;
+      first.content = `${first.content}\n\n${block}`;
+    } catch (e) {
+      this.logger.debug(
+        `[${context.runId}] Session focus append skipped: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  /** Số tin nhắn gần nhất load từ DB (user+assistant). Env: CHAT_HISTORY_LIMIT */
+  private resolveHistoryLimit(): number {
+    const raw = this.configService.get<string>('CHAT_HISTORY_LIMIT');
+    const n = raw !== undefined && raw !== '' ? Number(raw) : NaN;
+    if (!Number.isFinite(n) || n < 1) return DEFAULT_HISTORY_LIMIT;
+    return Math.min(Math.floor(n), MAX_HISTORY_LIMIT_CAP);
   }
 
   private maybePruneIrrelevantHistory(
@@ -212,20 +263,22 @@ export class PreprocessStep {
       );
     if (looksLikeConfirmation) return;
 
+    // Câu tiếp theo ngắn / đại từ / "thế sao" — gần như luôn bám ngữ cảnh lượt trước;
+    // so Jaccard với *một* tin user dài trước đó hay cho điểm ~0 → đừng prune.
+    if (this.looksLikeFollowUpTurn(current)) return;
+
     const hasContinuation =
-      /\b(như\s*trên|tiếp\s*tục|tiếp\s*theo|vẫn|làm\s*tiếp|gửi\s*tiếp|tiếp\s*nhé)\b/i.test(
+      /\b(như\s*trên|nhu\s*tren|tiếp\s*tục|tiep\s*tuc|tiếp\s*theo|tiep\s*theo|vẫn|van|làm\s*tiếp|lam\s*tiep|gửi\s*tiếp|gui\s*tiep|tiếp\s*nhé|tiep\s*nhe|theo\s*đó|theo\s*do)\b/i.test(
         current,
       );
 
     if (currentTokens.length < MIN_CURRENT_TOKENS_FOR_PRUNE) return;
 
-    const lastUser = [...historyMessages]
-      .slice()
-      .reverse()
-      .find((m) => m.role === 'user');
-    if (!lastUser) return;
-
-    const score = this.topicJaccard(current, lastUser.content);
+    const score = this.maxTopicOverlapWithRecent(
+      current,
+      historyMessages,
+      TOPIC_OVERLAP_RECENT_MESSAGES,
+    );
 
     // Common case: structured "Chủ đề: ... Nội dung: ..." email prompts.
     const structuredNewPrompt =
@@ -257,6 +310,46 @@ export class PreprocessStep {
     this.logger.debug(
       `[${context.runId}] Pruned irrelevant history (jaccard=${score.toFixed(3)}; currentTokens=${currentTokens.length}; hasContinuation=${hasContinuation}; keepNonSystem=${keptTail.length})`,
     );
+  }
+
+  /**
+   * Tin ngắn / hỏi tiếp ("thế sao?", "còn X?") — Jaccard với một tin user dài trước đó thường ~0
+   * dù vẫn cùng chủ đề; không prune. Tin dài, không khớp mẫu → dùng maxTopicOverlapWithRecent.
+   */
+  private looksLikeFollowUpTurn(text: string): boolean {
+    const t = String(text ?? '').trim();
+    if (!t) return false;
+    const wc = t.split(/\s+/).length;
+    if (wc <= 8 || t.length <= 56) return true;
+    const n = t
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase();
+    return (
+      /^(the|va|ua|con|vay|sao|gi|roi)\b/i.test(n) ||
+      /\b(the\s+thi|vay\s+thi|con\s+(ve|lai)|nhu\s+vay|noi\s+tiep|y\s+tren|cai\s+do|phan\s+tren|cau\s+tren|tin\s+tren)\b/i.test(
+        n,
+      ) ||
+      /\b(what\s+about|how\s+about)\b/i.test(n)
+    );
+  }
+
+  /** Lấy max Jaccard giữa tin hiện tại và N tin user/assistant cuối (kể cả bản assistant vừa trả lời). */
+  private maxTopicOverlapWithRecent(
+    current: string,
+    historyMessages: ILlmMessage[],
+    depth: number,
+  ): number {
+    const tail = historyMessages.slice(-Math.max(1, depth));
+    let max = 0;
+    for (const m of tail) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      const c = m.content ?? '';
+      if (!c.trim()) continue;
+      const s = this.topicJaccard(current, c);
+      if (s > max) max = s;
+    }
+    return max;
   }
 
   private tokenizeKeywords(text: string): string[] {

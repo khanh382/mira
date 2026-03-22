@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
+import { mkdir, readdir, rm, stat } from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { DEFAULT_BRAIN_DIR } from '../../config/brain-dir.config';
@@ -10,9 +11,35 @@ import {
 } from '../../config/owner-shared-markdown.config';
 
 /** Luôn nối vào system prompt — không phụ thuộc file workspace (tránh bị override mất). */
+const AGENT_BREVITY_GUIDANCE = `## Trả lời ngắn & đúng trọng tâm (hệ thống)
+
+Với câu **hỏi đơn giản** (tên, một fact, có/không, xác nhận nhanh): trả lời **gọn** — thường **1–2 câu**, nói **như người thật**: vd. "Dạ, anh tên Khánh ạ." / "Em là Mira ạ." **Cấm** kiểu công nghiệp: "theo memory", "ghi chú ngày …/…", "dữ liệu", "đã xác nhận từ …", "trong USER.md/MEMORY.md" — user **không** hỏi file lưu ở đâu thì **đừng** kể nguồn hay ngày lưu.
+
+Hỏi **tên** ("em tên gì", "anh tên gì", "bạn là ai" chỉ để biết tên): **chỉ** trả lời tên (có thể **một** câu lịch sự). **Cấm** xen đoạn "em là trợ lý ảo / luôn sẵn sàng hỗ trợ…" và **cấm** câu hỏi đuôi "Cần em điều chỉnh tên hoặc cách xưng hô không" — user **không** hỏi đổi tên hay xưng hô.
+
+**Không** hỏi đuôi kiểu "có muốn cập nhật / đổi tên / chỉnh xưng hô không" sau mỗi câu trả lời trivi — chỉ hỏi khi user **đang** sửa thông tin hoặc **chủ đề** là cài đặt profile.
+
+**Không** dẫn chiếu dài kiểu "theo USER.md và MEMORY.md", **không** thêm khối "Ghi chú nhanh" / bullet phụ. Giới thiệu vai trò dài ("Em là Mira, luôn sẵn sàng…") **chỉ** khi user hỏi **em là ai / bot làm gì / giới thiệu bản thân** — **không** dùng khi chỉ hỏi **tên**.
+
+Khi lượt đó **không** cần gọi tool hay skill (chỉ hội thoại / trả lời từ ngữ cảnh đã có), hoặc sau tool đã xong và chỉ cần **nói kết quả cho user**: tin nhắn cuối **đơn giản, đủ ý** — **không** liệt kê tool có sẵn, **không** hướng dẫn dùng bot dài dòng trừ khi user hỏi cách dùng.
+
+## Ngữ cảnh lịch sử & ưu tiên lượt hiện tại (hệ thống)
+
+Lịch sử chat trong prompt được xếp **theo thời gian** (cũ trước, mới sau). **Trọng tâm bắt buộc** là **tin nhắn user của lượt này** (câu hỏi / yêu cầu mới nhất). Các lượt trước chỉ là **bối cảnh** để nối ý (đại từ, "cái đó", "bước trên") khi **cùng chủ đề**.
+
+Nếu tin mới **đổi chủ đề** rõ rệt so với đoạn hội thoại ngay trước → trả lời **theo chủ đề mới**, không cố ghép với chủ đề cũ. Chỉ dùng lại chủ đề cũ khi user **nói rõ** (vd. "quay lại phần nãy", "ý em là câu trên").
+
+**Lưu ý kỹ thuật:** Không có bước riêng "quét từ mới đến cũ" — model xử lý cả khối message cùng lúc; quy tắc trên là để **ưu tiên đúng ý định lượt hiện tại** giống cách Cursor coi đoạn gần nhất là trọng tâm.
+
+**Lệnh vs thực thi:** Nếu user hỏi "cho anh **lệnh**", "**cách** xóa", "**hướng dẫn**", "**syntax**" (kể cả có từ "xóa" trong câu) → chỉ **trả lời bằng chữ** (cú pháp chat/tool, tham số). **Không** gọi tool mang tính hủy/xóa trừ khi user **yêu cầu thực hiện** rõ (vd. "xóa giúp", "dọn hộ", "gọi tool xóa").
+
+**Emoji / icon (mặc định):** Trong hội thoại thường **không** dùng emoji, symbol trang trí hay icon (🌸💬✨…). Chữ thuần, lịch sự. **Ngoại lệ:** user tự dùng emoji rõ ràng hoặc **yêu cầu** vui nhộn/có icon; hoặc cần nhãn tối thiểu cho lỗi/cảnh báo STOP (có thể một ký hiệu ngắn nếu thật cần).`;
+
 const AGENT_NEXT_STEP_COMMANDS_GUIDANCE = `## Gợi ý lệnh bước tiếp theo (hệ thống)
 
-Sau khi trả lời một **tác vụ phức tạp** (nhiều bước, nhiều tool, hoặc luồng còn có thể tiếp tục rõ ràng), hãy thêm một mục ngắn **"Gợi ý bước tiếp theo"** (hoặc tương đương):
+**Khi nào KHÔNG thêm mục gợi ý (quan trọng):** Câu hỏi thường, trò chuyện, hỏi đáp đơn giản, hoặc lượt **không** phải lúc vừa chạy nhiều tool / tác vụ còn dở — **đừng** thêm khối "Gợi ý nhanh", "Ghi chú nhanh", "Gợi ý bước tiếp theo", hay danh sách lệnh \`/tool_...\`, \`/memory_get\`, v.v. Trả lời tự nhiên như chat; **đừng** kết thúc bằng "có cập nhật không", "điều chỉnh tên hoặc cách xưng hô không" nếu chỉ là hỏi tên/fact đơn giản. Thêm lệnh gợi ý vào **mọi** lượt sẽ tạo cảm giác máy móc.
+
+**Chỉ khi nào nên thêm:** Sau khi vừa xử lý **tác vụ phức tạp** (nhiều bước, nhiều tool, hoặc luồng rõ ràng còn bước tiếp theo), thêm một mục ngắn **"Gợi ý bước tiếp theo"** (hoặc tương đương):
 
 - **2–5 gạch đầu dòng**; mỗi gạch = một hướng cụ thể + **câu lệnh gợi ý** user có thể copy/paste.
 - Dùng đúng syntax chat/gateway:
@@ -40,7 +67,7 @@ Sau khi trả lời một **tác vụ phức tạp** (nhiều bước, nhiều t
  *       │   ├── MEMORY.md           ← Long-term memory
  *       │   └── memory/             ← Daily notes
  *       │       └── YYYY-MM-DD.md
- *       ├── sessions/               ← Chat history JSONL; per-thread tasks: sessions/<threadId>/tasks/
+ *       ├── sessions/               ← Chat history JSONL; per-thread: tasks/, context_focus.json (tóm tắt nền)
  *       │                             (task memory: _tasks_index.json + task-<ordinal>-<id>/state.json)
  *       ├── browser_dom_presets/    ← Optional: override _shared browser_dom_presets/<domain>.json
  *       └── skills/                 ← User-specific skills
@@ -113,6 +140,310 @@ export class WorkspaceService implements OnModuleInit {
     const dir = path.join(this.getUserDir(identifier), 'media', 'incoming');
     fs.mkdirSync(dir, { recursive: true });
     return dir;
+  }
+
+  /**
+   * Xóa toàn bộ file/thư mục con trong `media/incoming` của user (giữ lại thư mục incoming).
+   */
+  async cleanUserMediaIncomingDir(identifier: string): Promise<{
+    removed: number;
+    path: string;
+    errors: string[];
+  }> {
+    const dir = path.join(this.getUserDir(identifier), 'media', 'incoming');
+    await mkdir(dir, { recursive: true });
+    const errors: string[] = [];
+    let removed = 0;
+    let entries: fs.Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch (e) {
+      return {
+        removed: 0,
+        path: dir,
+        errors: [(e as Error).message],
+      };
+    }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      try {
+        await rm(p, { recursive: true, force: true });
+        removed++;
+      } catch (err) {
+        errors.push(`${e.name}: ${(err as Error).message}`);
+      }
+    }
+    return { removed, path: dir, errors };
+  }
+
+  /**
+   * Đường dẫn tuyệt đối an toàn trong `$BRAIN_DIR/<identifier>/` (chặn `..` thoát ra ngoài).
+   */
+  resolveSafePathUnderUserDir(
+    identifier: string,
+    relativePath: string,
+  ): string | null {
+    const root = path.resolve(this.getUserDir(identifier));
+    const rootNorm = path.resolve(root);
+    const rel = String(relativePath ?? '')
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+    if (rel.includes('\0')) return null;
+    const candidate =
+      !rel || rel === '.'
+        ? rootNorm
+        : path.resolve(path.join(root, rel));
+    if (candidate !== rootNorm && !candidate.startsWith(rootNorm + path.sep)) {
+      return null;
+    }
+    return candidate;
+  }
+
+  /** Nhãn gốc brain user cho chat — không chứa đường dẫn tuyệt đối trên server. */
+  userBrainDisplayRootLabel(identifier: string): string {
+    return `$BRAIN_DIR/${identifier}/`;
+  }
+
+  /** Đường dẫn tương đối trong thư mục user (dùng `/`), rỗng nếu trùng gốc user. */
+  userBrainRelativeFromRoot(identifier: string, absolutePath: string): string {
+    const rootNorm = path.resolve(this.getUserDir(identifier));
+    const abs = path.resolve(absolutePath);
+    const rel = path.relative(rootNorm, abs);
+    if (!rel || rel === '.') return '';
+    return rel.replace(/\\/g, '/');
+  }
+
+  /**
+   * Đường dẫn hiển thị cho user (vd. `$BRAIN_DIR/<id>/workspace/SOUL.md`).
+   * Dùng trong tin nhắn bot — không in path.resolve thật.
+   */
+  userBrainDisplayPath(
+    identifier: string,
+    absolutePath: string,
+    opts?: { isDirectory?: boolean },
+  ): string {
+    let isDir = opts?.isDirectory;
+    if (isDir === undefined) {
+      try {
+        isDir = fs.statSync(absolutePath).isDirectory();
+      } catch {
+        isDir = false;
+      }
+    }
+    const rel = this.userBrainRelativeFromRoot(identifier, absolutePath);
+    const base = `$BRAIN_DIR/${identifier}`;
+    if (!rel) {
+      return isDir ? `${base}/` : base;
+    }
+    const full = `${base}/${rel}`;
+    return isDir ? (full.endsWith('/') ? full : `${full}/`) : full;
+  }
+
+  /**
+   * Cây thư mục dưới gốc user — mặc định **một cấp** (chỉ mục trực tiếp dưới gốc; xem sâu hơn dùng `/brain_read`).
+   * `maxDepth`: số lần đệ quy vào thư mục con từ gốc (0 = chỉ một cấp; 1 = thêm một lớp trong mỗi thư mục cấp 1, v.v.).
+   */
+  async listUserBrainDirectoryTree(
+    identifier: string,
+    options?: { maxDepth?: number; maxEntries?: number },
+  ): Promise<string> {
+    const root = path.resolve(this.getUserDir(identifier));
+    const maxDepth = Math.min(Math.max(0, options?.maxDepth ?? 0), 4);
+    const maxEntries = Math.min(Math.max(20, options?.maxEntries ?? 120), 400);
+    const lines: string[] = [
+      `Gốc: ${this.userBrainDisplayRootLabel(identifier)}`,
+      `(tối đa ${maxDepth + 1} tầng từ gốc, tối đa ${maxEntries} mục; chỉ xem)`,
+      '',
+    ];
+    let count = 0;
+
+    const walk = async (dir: string, depth: number, indent: string): Promise<void> => {
+      if (count >= maxEntries) return;
+      let entries: fs.Dirent[];
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch (e) {
+        lines.push(`${indent}[lỗi đọc] ${path.relative(root, dir) || '.'}`);
+        return;
+      }
+      entries.sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      for (const e of entries) {
+        if (count >= maxEntries) {
+          lines.push(`${indent}… (giới hạn ${maxEntries} mục)`);
+          return;
+        }
+        const full = path.join(dir, e.name);
+        const rel = path.relative(root, full) || e.name;
+        if (e.isDirectory()) {
+          lines.push(`${indent}[DIR]  ${rel}/`);
+          count++;
+          if (depth < maxDepth && count < maxEntries) {
+            await walk(full, depth + 1, `${indent}  `);
+          }
+        } else {
+          let sizeHint = '';
+          try {
+            const st = await stat(full);
+            sizeHint =
+              st.size < 10_240
+                ? `  (${st.size} B)`
+                : st.size < 1024 * 1024
+                  ? `  (${(st.size / 1024).toFixed(1)} KB)`
+                  : `  (${(st.size / (1024 * 1024)).toFixed(1)} MB)`;
+          } catch {
+            /* */
+          }
+          lines.push(`${indent}[FILE] ${rel}${sizeHint}`);
+          count++;
+        }
+      }
+    };
+
+    if (!fs.existsSync(root)) {
+      lines.push('(thư mục user chưa tồn tại trên disk)');
+      return lines.join('\n');
+    }
+    await walk(root, 0, '');
+    lines.push(
+      '',
+      '---',
+      'Liệt kê **một cấp** trong thư mục: /brain_read <đường-dẫn> (vd. /brain_read workspace/ )',
+      'Đọc **nội dung file**: /brain_read workspace/SOUL.md',
+    );
+    return lines.join('\n');
+  }
+
+  private formatBrainReadHints(
+    root: string,
+    dirAbs: string,
+    entries: { name: string; isDir: boolean }[],
+  ): string {
+    const rootNorm = path.resolve(root);
+    const relBase =
+      dirAbs === rootNorm
+        ? ''
+        : path.relative(rootNorm, dirAbs).replace(/\\/g, '/');
+    const prefix = relBase ? `${relBase.replace(/\/$/, '')}/` : '';
+    const samples = entries.slice(0, 12).map((e) => {
+      const tail = e.isDir ? `${e.name}/` : e.name;
+      const p = prefix ? `${prefix}${tail}` : tail;
+      return `/brain_read ${p}`;
+    });
+    const more =
+      entries.length > 12
+        ? `\n… và ${entries.length - 12} mục khác (dùng /brain_read với đường dẫn tương tự).`
+        : '';
+    return (
+      `\n---\nGợi ý lệnh tiếp:\n${samples.join('\n')}${more}`
+    );
+  }
+
+  /**
+   * `/brain_read`: nếu là **thư mục** → liệt kê file/con một cấp; nếu là **file** → nội dung UTF-8.
+   * Đường dẫn rỗng hoặc `.` → gốc user.
+   */
+  readUserBrainPath(
+    identifier: string,
+    relativePath: string,
+    maxFileChars = 48_000,
+    maxDirEntries = 200,
+  ):
+    | { kind: 'file'; absolutePath: string; content: string }
+    | { kind: 'directory'; absolutePath: string; listing: string }
+    | { kind: 'error'; error: string } {
+    const root = path.resolve(this.getUserDir(identifier));
+    const relInput = String(relativePath ?? '').trim();
+    const candidate = this.resolveSafePathUnderUserDir(identifier, relInput);
+    if (!candidate) {
+      return {
+        kind: 'error',
+        error: 'Đường dẫn không hợp lệ hoặc tràn ra ngoài thư mục user.',
+      };
+    }
+    if (!fs.existsSync(candidate)) {
+      return { kind: 'error', error: 'Không tìm thấy đường dẫn.' };
+    }
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(candidate);
+    } catch (e) {
+      return { kind: 'error', error: (e as Error).message };
+    }
+
+    if (st.isDirectory()) {
+      let dirents: fs.Dirent[];
+      try {
+        dirents = fs.readdirSync(candidate, { withFileTypes: true });
+      } catch (e) {
+        return { kind: 'error', error: (e as Error).message };
+      }
+      dirents.sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      const slice = dirents.slice(0, maxDirEntries);
+      const lines: string[] = [
+        `Thư mục: ${this.userBrainDisplayPath(identifier, candidate, { isDirectory: true })}`,
+        `(dưới đây là **một cấp** — thư mục con / file)`,
+        '',
+      ];
+      const hintEntries: { name: string; isDir: boolean }[] = [];
+      for (const e of slice) {
+        const full = path.join(candidate, e.name);
+        if (e.isDirectory()) {
+          lines.push(`[DIR]  ${e.name}/`);
+          hintEntries.push({ name: e.name, isDir: true });
+        } else {
+          let sizeHint = '';
+          try {
+            const fst = fs.statSync(full);
+            sizeHint =
+              fst.size < 10_240
+                ? `  (${fst.size} B)`
+                : fst.size < 1024 * 1024
+                  ? `  (${(fst.size / 1024).toFixed(1)} KB)`
+                  : `  (${(fst.size / (1024 * 1024)).toFixed(1)} MB)`;
+          } catch {
+            /* */
+          }
+          lines.push(`[FILE] ${e.name}${sizeHint}`);
+          hintEntries.push({ name: e.name, isDir: false });
+        }
+      }
+      if (dirents.length > maxDirEntries) {
+        lines.push(`… (${dirents.length - maxDirEntries} mục bị ẩn — tăng giới hạn nếu cần)`);
+      }
+      lines.push(this.formatBrainReadHints(root, candidate, hintEntries));
+      return {
+        kind: 'directory',
+        absolutePath: candidate,
+        listing: lines.join('\n'),
+      };
+    }
+
+    if (!st.isFile()) {
+      return { kind: 'error', error: 'Không phải file hoặc thư mục thường.' };
+    }
+    const maxBytes = 2 * 1024 * 1024;
+    if (st.size > maxBytes) {
+      return {
+        kind: 'error',
+        error: `File quá lớn (${st.size} B). Tối đa ${maxBytes} B; dùng tool file_read/exec nếu cần.`,
+      };
+    }
+    const buf = fs.readFileSync(candidate);
+    let text = buf.toString('utf8');
+    const totalLen = text.length;
+    if (totalLen > maxFileChars) {
+      text =
+        text.slice(0, maxFileChars) +
+        `\n\n[… đã cắt còn ${totalLen - maxFileChars} ký tự]`;
+    }
+    return { kind: 'file', absolutePath: candidate, content: text };
   }
 
   getUserCookiesDir(identifier: string): string {
@@ -541,6 +872,7 @@ export class WorkspaceService implements OnModuleInit {
       if (readable) parts.push(readable);
     }
 
+    parts.push(AGENT_BREVITY_GUIDANCE);
     parts.push(AGENT_NEXT_STEP_COMMANDS_GUIDANCE);
 
     const value = parts.join('\n\n---\n\n');

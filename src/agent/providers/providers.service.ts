@@ -89,4 +89,14 @@ export class ProvidersService {
       model: resolved.modelName,
     });
   }
+
+  /** Đợi load key từ DB (OpenRouter, …) trước khi kiểm tra model. */
+  async ensureProvidersReady(): Promise<void> {
+    await this.ensureKeysLoaded();
+  }
+
+  /** Model string giống agent (vd. `openai/gpt-4o-mini`, `deepseek/deepseek-chat`). */
+  canResolveModel(model: string): boolean {
+    return this.resolveProvider(model) !== null;
+  }
 }

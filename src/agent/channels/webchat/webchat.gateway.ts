@@ -11,11 +11,29 @@ import {
 } from '@nestjs/websockets';
 import { Logger, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
+import { sanitizeAssistantOutboundPlainText } from '../../../modules/bot-users/assistant-outbound-plain-text';
+
+/** CORS cho handshake Socket.IO — trùng logic với `isOriginAllowed` (chống CSWSH). */
+function resolveWebchatCorsOrigins(): string[] {
+  const ws = process.env.WS_ALLOWED_ORIGINS?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (ws?.length) return ws;
+  const fe = process.env.FRONTEND_URLS?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (fe?.length) return fe;
+  return ['http://localhost:3000', 'http://127.0.0.1:3000'];
+}
 
 @WebSocketGateway({
   namespace: '/webchat',
-  cors: { origin: '*' },
+  cors: {
+    origin: resolveWebchatCorsOrigins(),
+    credentials: true,
+  },
 })
 @Injectable()
 export class WebChatGateway
@@ -32,10 +50,31 @@ export class WebChatGateway
 
   private gatewayService: any;
 
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
+  ) {}
 
   setGatewayService(service: any) {
     this.gatewayService = service;
+  }
+
+  private getAllowedOrigins(): string[] {
+    const ws = this.configService.get<string>('WS_ALLOWED_ORIGINS', '');
+    if (ws.trim()) {
+      return ws.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    const fe = this.configService.get<string>('FRONTEND_URLS', '');
+    if (fe.trim()) {
+      return fe.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    return ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  }
+
+  /** Cho phép không có Origin (CLI / app native); trình duyệt phải khớp allowlist. */
+  private isOriginAllowed(origin: string | undefined): boolean {
+    if (!origin) return true;
+    return this.getAllowedOrigins().includes(origin);
   }
 
   afterInit(server: Server) {
@@ -43,6 +82,14 @@ export class WebChatGateway
   }
 
   async handleConnection(client: Socket) {
+    const origin = client.handshake.headers.origin;
+    if (!this.isOriginAllowed(origin)) {
+      this.logger.warn(`Client rejected (bad Origin): ${origin ?? '(none)'}`);
+      client.emit('error', { message: 'Origin not allowed' });
+      client.disconnect();
+      return;
+    }
+
     try {
       const token =
         client.handshake.auth?.token ||
@@ -116,7 +163,9 @@ export class WebChatGateway
       );
 
       client.emit('message:response', {
-        content: result.response,
+        content: result.response
+          ? sanitizeAssistantOutboundPlainText(result.response)
+          : result.response,
         threadId: result.threadId,
         tokensUsed: result.tokensUsed,
         runId: result.runId,

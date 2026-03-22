@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { ChatMessage, MessageRole } from './entities/chat-message.entity';
+import { sanitizeLlmDisplayLeakage } from '../bot-users/llm-output-sanitize';
 
 @Injectable()
 export class ChatService {
@@ -52,9 +53,14 @@ export class ChatService {
     content: string;
     tokensUsed?: number;
   }): Promise<ChatMessage> {
+    const content =
+      data.role === MessageRole.ASSISTANT
+        ? sanitizeLlmDisplayLeakage(data.content)
+        : data.content;
     const message = this.messageRepo.create({
       id: uuidv4(),
       ...data,
+      content,
     });
     return this.messageRepo.save(message);
   }

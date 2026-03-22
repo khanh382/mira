@@ -38,6 +38,12 @@ export const SYSTEM_BOT_MENU_ENTRIES: readonly BotMenuEntry[] = [
     discordDescription: 'Tạo session chat mới',
   },
   {
+    command: 'brain_tree',
+    telegramDescription:
+      'Một cấp từ gốc brain; /brain_read [path] = list thư mục hoặc đọc file',
+    discordDescription: 'Cây brain một cấp; /brain_read liệt kê hoặc đọc file',
+  },
+  {
     command: 'stop',
     telegramDescription: 'Tạm dừng tác vụ cho tài khoản của bạn',
     discordDescription: 'Dừng tác vụ của bạn',
@@ -80,6 +86,8 @@ export function buildMenuHelpText(): string {
     ),
     '',
     'Khác:',
+    '- /brain_read [đường-dẫn] — thư mục: liệt kê con một cấp; file: nội dung. Bỏ trống = gốc user',
+    '- /clean_media_incoming — xóa nội dung media/incoming (không nằm trong menu bot)',
     '- /list_tools — giống /list_skills (mã tool backend)',
     '- /run_skill <mã> <json hoặc key=value> — chạy gói trong $BRAIN_DIR/_shared/skills/',
     '- /delete_skill <mã> — xóa gói (owner)',

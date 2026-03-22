@@ -54,6 +54,13 @@ export class ChatThread {
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
+  /**
+   * Khi set: tin nhắn tiếp theo trên thread này được proxy tới OpenClaw (chỉ chủ bot, không grantee).
+   * null = agent hệ thống (pipeline nội bộ).
+   */
+  @Column({ name: 'active_openclaw_oa_id', type: 'int', nullable: true })
+  activeOpenclawAgentId: number | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
