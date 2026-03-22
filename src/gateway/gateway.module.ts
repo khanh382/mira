@@ -1,6 +1,6 @@
 import { Module, OnModuleInit } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { AuthJwtModule } from '../common/auth-jwt.module';
 
 import { GatewayService } from './gateway.service';
 import { GatewayController } from './gateway.controller';
@@ -25,16 +25,7 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
 
 @Module({
   imports: [
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET', 'default_secret'),
-        signOptions: {
-          expiresIn: configService.get('JWT_EXPIRES_IN', '24h'),
-        },
-      }),
-      inject: [ConfigService],
-    }),
+    AuthJwtModule,
     UsersModule,
     BotUsersModule,
     ChatModule,

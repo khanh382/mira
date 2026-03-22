@@ -1,9 +1,10 @@
 # Database Schema (DBDiagram / DBML)
 
-> Schema duoc trich tu cac entity hien tai trong `backend/src`.
-> Ban co the copy khoi DBML ben duoi vao [dbdiagram.io](https://dbdiagram.io).
+> Schema trích từ các entity trong `src/**/*.entity.ts` (thêm các bảng `agent_workflows`, `agent_workflow_steps`, `agent_workflow_runs`, `agent_workflow_run_steps` cho tiến trình OpenClaw; DDL `src/modules/agent-workflows/schema.sql`).
+> Có thể copy khối DBML vào [dbdiagram.io](https://dbdiagram.io).
 
 ```dbml
+// Cấu hình API key và tham số scheduler toàn cục (thường một dòng).
 Table config {
   cof_id integer [pk, increment]
   cof_openai_api_key varchar [null]
@@ -20,6 +21,7 @@ Table config {
   cof_scheduler_max_consecutive_failed_ticks integer [null]
 }
 
+// Tài khoản người dùng: đăng nhập, kênh liên kết, vai trò (owner/colleague/client).
 Table users {
   uid integer [pk, increment]
   identifier varchar [unique]
@@ -40,6 +42,7 @@ Table users {
   update_at timestamp
 }
 
+// Một user có thể có bot: token/cấu hình theo nền tảng (Telegram, Discord, …).
 Table bot_users {
   bu_id integer [pk, increment]
   bu_uid integer [unique, ref: > users.uid]
@@ -52,6 +55,7 @@ Table bot_users {
   update_at timestamp
 }
 
+// Cấp quyền user nền tảng (Telegram/Zalo/…) được phép dùng bot (verify, grant).
 Table bot_access_grants {
   grant_id integer [pk, increment]
   bu_id integer [ref: > bot_users.bu_id]
@@ -63,6 +67,7 @@ Table bot_access_grants {
   created_at timestamp
 }
 
+// Luồng hội thoại chat hệ thống (web hoặc bot): thread_id, kênh, tiêu đề, route OpenClaw tùy chọn.
 Table chat_threads {
   thread_id uuid [pk]
   uid integer [ref: > users.uid]
@@ -77,6 +82,7 @@ Table chat_threads {
   updated_at timestamp
 }
 
+// Tin nhắn trong thread chat: role, nội dung, vector hóa / export.
 Table chat_messages {
   msg_id uuid [pk]
   thread_id uuid [ref: > chat_threads.thread_id]
@@ -97,6 +103,7 @@ Table chat_messages {
   }
 }
 
+// Đăng ký skill (tool) dùng trong pipeline: mã, mô tả, tier model tối thiểu.
 Table skills_registry {
   skill_id integer [pk, increment]
   skill_code varchar [unique]
@@ -110,6 +117,7 @@ Table skills_registry {
   updated_at timestamp
 }
 
+// Tác vụ theo lịch (cron) gắn user: prompt agent, skill cho phép, thống kê chạy.
 Table scheduled_tasks {
   task_id integer [pk, increment]
   uid integer [ref: > users.uid]
@@ -137,6 +145,7 @@ Table scheduled_tasks {
   updated_at timestamp
 }
 
+// Đăng ký OpenClaw Gateway do user tự host: domain/port, relay path, sở trường (expertise).
 Table openclaw_agents {
   oa_id integer [pk, increment]
   oa_name varchar
@@ -155,6 +164,63 @@ Table openclaw_agents {
   updated_at timestamp
 }
 
+// Định nghĩa tiến trình nối tiếp nhiều agent OpenClaw: tên, bật/tắt, cron tùy chọn.
+Table agent_workflows {
+  wf_id integer [pk, increment]
+  wf_uid integer [ref: > users.uid]
+  wf_name varchar
+  wf_description text [null]
+  wf_enabled boolean [default: true]
+  wf_cron_expression varchar(128) [null]
+  wf_cron_enabled boolean [default: false]
+  wf_last_cron_at timestamptz [null]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+// Các bước trong một workflow: thứ tự, agent (oa_id), prompt/template đầu vào.
+Table agent_workflow_steps {
+  wfs_id integer [pk, increment]
+  wf_id integer [ref: > agent_workflows.wf_id]
+  wfs_order integer
+  oa_id integer [ref: > openclaw_agents.oa_id]
+  wfs_input_text text
+}
+
+// Một lần chạy workflow (thủ công hoặc cron): trạng thái, tóm tắt, lỗi; wr_context = nhớ tạm điều phối (JSON).
+Table agent_workflow_runs {
+  wr_id uuid [pk]
+  wf_id integer [ref: > agent_workflows.wf_id]
+  wr_uid integer [ref: > users.uid]
+  wr_status varchar
+  wr_current_step integer
+  wr_error text [null]
+  wr_summary text [null]
+  wr_context jsonb [null]
+  wr_trigger varchar
+  wr_started_at timestamptz [null]
+  wr_finished_at timestamptz [null]
+  created_at timestamptz
+}
+
+// Chi tiết từng bước trong một lần chạy: input/output, snapshot tên & sở trường agent.
+Table agent_workflow_run_steps {
+  wrs_id uuid [pk]
+  wr_id uuid [ref: > agent_workflow_runs.wr_id]
+  step_index integer
+  oa_id integer [ref: > openclaw_agents.oa_id]
+  wrs_status varchar
+  wrs_input text
+  wrs_output text [null]
+  wrs_error text [null]
+  oa_name_snapshot varchar(255) [null]
+  oa_expertise_snapshot text [null]
+  wrs_metadata jsonb [null]
+  wrs_started_at timestamptz [null]
+  wrs_finished_at timestamptz [null]
+}
+
+// Phiên chat OpenClaw (tách khỏi chat_threads): session key, gắn thread UI tùy chọn.
 Table openclaw_threads {
   oct_id uuid [pk]
   uid integer [ref: > users.uid]
@@ -170,6 +236,7 @@ Table openclaw_threads {
   updated_at timestamp
 }
 
+// Tin nhắn trong phiên OpenClaw: role, nội dung, metadata JSON (extra).
 Table openclaw_messages {
   ocm_id uuid [pk]
   oct_id uuid [ref: > openclaw_threads.oct_id]
@@ -177,16 +244,18 @@ Table openclaw_messages {
   role enum('system', 'user', 'assistant', 'tool')
   content text
   oa_display_name varchar [null]
-  extra json [null]
+  extra jsonb [null]
   created_at timestamp
 }
 ```
 
 ## Ghi chu
 
-- Bang `config` la global singleton (thuc te thuong chi co 1 dong).
-- `skills_registry.min_model_tier` map theo enum code: `cheap | skill | processor | expert`.
-- `scheduled_tasks.max_model_tier` hien dang de `varchar` trong entity (chua enum cứng).
-- `users.update_at` va `bot_users.update_at` (khong phai `updated_at`) dung ten cot nhu trong entity TypeORM.
-- `chat_threads` / `chat_messages`: cot `telegram_id`, `zalo_id`, `discord_id` map theo kenh (nullable).
-- OpenClaw (module `openclaw-agents`): luu dang ky Gateway user tu host; `openclaw_threads` / `openclaw_messages` tach khoi chat he thong. DDL tham khao `src/modules/openclaw-agents/schema.sql`.
+- Bảng `config` là global singleton (thực tế thường chỉ một dòng).
+- `skills_registry.min_model_tier` map theo enum: `cheap | skill | processor | expert`.
+- `scheduled_tasks.max_model_tier` trong entity là `varchar` (chưa enum cứng).
+- `users.update_at` và `bot_users.update_at` (không phải `updated_at`) đúng tên cột TypeORM; `chat_threads` / `chat_messages` dùng `updated_at`.
+- `chat_threads` / `chat_messages`: cột `telegram_id`, `zalo_id`, `discord_id` theo kênh (nullable).
+- `chat_threads.active_openclaw_oa_id`: khi set, thread có thể proxy sang OpenClaw Gateway (xem `SYSTEM_COMMANDS.md`).
+- OpenClaw (`src/modules/openclaw-agents/`): đăng ký Gateway do user tự host; `openclaw_threads` / `openclaw_messages` tách khỏi `chat_*`. Cột `openclaw_messages.extra` là **JSONB** trong PostgreSQL (entity `jsonb`). DDL: `schema.sql`.
+- Tiến trình OpenClaw nối tiếp: `agent_workflow_runs.wr_summary`, **`wr_context`** (JSONB nhớ tạm điều phối); `agent_workflow_run_steps` lưu snapshot `oa_name_snapshot`, `oa_expertise_snapshot` và `wrs_metadata` (JSONB). Mô tả: `brains/_shared/WORKFLOW_RUN_HISTORY.md`.

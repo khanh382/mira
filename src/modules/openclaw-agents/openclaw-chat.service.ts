@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import {
   ChatThread,
@@ -8,7 +8,10 @@ import {
 } from '../chat/entities/chat-thread.entity';
 import { ThreadsService } from '../chat/threads.service';
 import { User } from '../users/entities/user.entity';
-import { OpenclawAgent, OpenclawAgentStatus } from './entities/openclaw-agent.entity';
+import {
+  OpenclawAgent,
+  OpenclawAgentStatus,
+} from './entities/openclaw-agent.entity';
 import { OpenclawThread } from './entities/openclaw-thread.entity';
 import {
   OpenclawMessage,
@@ -278,6 +281,124 @@ export class OpenclawChatService {
       zaloId: params.zaloId,
       discordId: params.discordId,
       title: null,
+    });
+    return this.octRepo.save(row);
+  }
+
+  /**
+   * Gọi OpenClaw cho tiến trình workflow (không qua chat UI).
+   * Phiên theo (runId, oa_id) — không throw; lỗi relay trả ok=false.
+   */
+  async invokeRelayForWorkflowRun(params: {
+    ownerUid: number;
+    runId: string;
+    oaId: number;
+    inputText: string;
+  }): Promise<{ ok: boolean; reply: string }> {
+    const agent = await this.agentsService.findAgentForOwner(
+      params.oaId,
+      params.ownerUid,
+    );
+    if (!agent) {
+      return {
+        ok: false,
+        reply: `Không tìm thấy OpenClaw agent oa_id=${params.oaId} hoặc không thuộc tài khoản.`,
+      };
+    }
+    if (agent.status === OpenclawAgentStatus.DISABLED) {
+      return {
+        ok: false,
+        reply: `OpenClaw agent #${params.oaId} đang disabled.`,
+      };
+    }
+
+    const oct = await this.findOrCreateWorkflowThreadForRun({
+      ownerUid: params.ownerUid,
+      agent,
+      runId: params.runId,
+    });
+
+    const userMsg = this.ocmRepo.create({
+      id: uuidv4(),
+      threadId: oct.id,
+      ownerUserId: params.ownerUid,
+      role: OpenclawMessageRole.USER,
+      content: params.inputText,
+      agentDisplayName: null,
+      extra: null,
+    });
+    await this.ocmRepo.save(userMsg);
+
+    let reply: string;
+    let nextSession: string | null = oct.openclawSessionKey;
+    let relayOk = false;
+
+    try {
+      const out = await this.relay.sendChat({
+        agent,
+        message: params.inputText,
+        sessionKey: oct.openclawSessionKey,
+      });
+      reply = out.reply;
+      nextSession = out.sessionKey;
+      relayOk = true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `OpenClaw relay failed (workflow) oa_id=${params.oaId}: ${msg}`,
+      );
+      reply = msg;
+    }
+
+    await this.octRepo.update(oct.id, {
+      openclawSessionKey: nextSession,
+      updatedAt: new Date(),
+    });
+
+    const asst = this.ocmRepo.create({
+      id: uuidv4(),
+      threadId: oct.id,
+      ownerUserId: params.ownerUid,
+      role: OpenclawMessageRole.ASSISTANT,
+      content: reply,
+      agentDisplayName: agent.name,
+      extra: null,
+    });
+    await this.ocmRepo.save(asst);
+
+    if (relayOk) {
+      await this.agentsService.markRelaySuccess(agent.id);
+    } else {
+      await this.agentsService.markRelayFailure(agent.id, reply);
+    }
+
+    return { ok: relayOk, reply };
+  }
+
+  private async findOrCreateWorkflowThreadForRun(params: {
+    ownerUid: number;
+    agent: OpenclawAgent;
+    runId: string;
+  }): Promise<OpenclawThread> {
+    const title = `workflow:${params.runId}:${params.agent.id}`;
+    const existing = await this.octRepo.findOne({
+      where: {
+        ownerUserId: params.ownerUid,
+        agentId: params.agent.id,
+        chatThreadId: IsNull(),
+        title,
+      },
+    });
+    if (existing) return existing;
+
+    const row = this.octRepo.create({
+      id: uuidv4(),
+      ownerUserId: params.ownerUid,
+      agentId: params.agent.id,
+      chatThreadId: null,
+      openclawSessionKey: null,
+      platform: ChatPlatform.WEB,
+      title,
     });
     return this.octRepo.save(row);
   }
