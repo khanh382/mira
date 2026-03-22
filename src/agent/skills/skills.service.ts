@@ -15,6 +15,8 @@ import { SKILL_METADATA, SkillMetadata } from './decorators/skill.decorator';
 import { ClawhubLoaderService } from './clawhub/clawhub-loader.service';
 import { UsersService } from '../../modules/users/users.service';
 import { UserLevel } from '../../modules/users/entities/user.entity';
+import { isColleagueSafeTool } from './tool-safety.config';
+import type { ISkillResult } from './interfaces/skill-runner.interface';
 
 /**
  * SkillsService — unified registry cho cả code-based và prompt-based skills.
@@ -144,6 +146,20 @@ export class SkillsService implements OnModuleInit {
       };
     }
 
+    if (
+      user?.level === UserLevel.COLLEAGUE &&
+      !isColleagueSafeTool(skillCode)
+    ) {
+      return {
+        success: false,
+        error:
+          'Tool này không dành cho colleague (chỉ các tool đọc an toàn). ' +
+          'Owner mới dùng tool ghi/sửa/xóa/đăng. ' +
+          'Human-in-the-loop (xác nhận trên UI) sẽ cần khi mở tool rủi ro cho colleague.',
+        metadata: { durationMs: Date.now() - start },
+      };
+    }
+
     const runner = this.getRunner(skillCode);
     if (!runner) {
       throw new Error(
@@ -152,33 +168,52 @@ export class SkillsService implements OnModuleInit {
     }
 
     const timeoutMs = Number(
-      this.configService.get('SKILL_EXEC_TIMEOUT_MS', 30000),
+      this.configService.get('SKILL_EXEC_TIMEOUT_MS', 20000),
     );
-    const budget = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000;
+    const budget = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 20000;
 
-    return new Promise((resolve) => {
-      const t = setTimeout(() => {
+    const signal = AbortSignal.timeout(budget);
+    let settled = false;
+
+    return new Promise<ISkillResult>((resolve) => {
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
         resolve({
           success: false,
           error:
             `Tool bị timeout sau ${budget}ms — hãy thử cách khác hoặc báo lại cho user.`,
           metadata: { durationMs: Date.now() - start, timedOut: true },
         });
-      }, budget);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
 
       runner
-        .execute(context)
+        .execute({ ...context, signal })
         .then((result) => {
-          clearTimeout(t);
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', onAbort);
           resolve(result);
         })
         .catch((err: Error) => {
-          clearTimeout(t);
-          resolve({
-            success: false,
-            error: err?.message ?? String(err),
-            metadata: { durationMs: Date.now() - start },
-          });
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', onAbort);
+          if (err?.name === 'AbortError' || signal.aborted) {
+            resolve({
+              success: false,
+              error:
+                `Tool bị timeout sau ${budget}ms — hãy thử cách khác hoặc báo lại cho user.`,
+              metadata: { durationMs: Date.now() - start, timedOut: true },
+            });
+          } else {
+            resolve({
+              success: false,
+              error: err?.message ?? String(err),
+              metadata: { durationMs: Date.now() - start },
+            });
+          }
         });
     });
   }

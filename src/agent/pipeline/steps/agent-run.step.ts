@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { HooksService } from '../../hooks/hooks.service';
 import { PluginHookName } from '../../hooks/enums/hook-events.enum';
 import { ProvidersService } from '../../providers/providers.service';
@@ -22,6 +23,14 @@ import {
 } from '../../../gateway/workspace/task-memory.service';
 import { getSharedSkillsPathMentionRegex } from '../../../config/brain-dir.config';
 import { IToolDefinitionForLLM } from '../../skills/interfaces/skill-runner.interface';
+import { isColleagueSafeTool } from '../../skills/tool-safety.config';
+
+/** Chỉ colleague: đếm lỗi theo (tool + tham số), in-memory trong 1 lượt agent. Owner không áp dụng. */
+const COLLEAGUE_PARAM_CIRCUIT_KEY = 'colleagueParamCircuitBreaker';
+
+interface ColleagueParamCircuitState {
+  failedActions: Record<string, number>;
+}
 
 const BIG_DATA_THRESHOLD = 50_000;
 /** Giới hạn độ dài nội dung tool đưa vào history LLM (tránh vỡ context 64k/128k). */
@@ -133,6 +142,8 @@ export class AgentRunStep {
     ];
 
     const toolUser = await this.usersService.findById(context.userId);
+    context.metadata['pipelineUserLevel'] = toolUser?.level;
+
     let tools: IToolDefinitionForLLM[];
 
     if (toolUser?.level === UserLevel.CLIENT) {
@@ -176,6 +187,10 @@ export class AgentRunStep {
           toolChoice.toolNames.includes(t.name),
         );
       }
+
+      if (toolUser?.level === UserLevel.COLLEAGUE) {
+        tools = tools.filter((t) => isColleagueSafeTool(t.name));
+      }
     }
 
     // Combine current user message + selected history to detect intent on confirmation turns.
@@ -195,6 +210,12 @@ export class AgentRunStep {
     context.metadata['intentText'] = currentHasDeletionTrigger
       ? [context.processedContent, recentHistoryText].filter(Boolean).join('\n')
       : (context.processedContent ?? '');
+
+    if (toolUser?.level === UserLevel.COLLEAGUE) {
+      context.metadata[COLLEAGUE_PARAM_CIRCUIT_KEY] = {
+        failedActions: {},
+      } satisfies ColleagueParamCircuitState;
+    }
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       this.throwIfStopped(context);
@@ -525,6 +546,58 @@ export class AgentRunStep {
 
   // ─── Tool Execution ──────────────────────────────────────────
 
+  private isSkillToolFailure(result: unknown): boolean {
+    if (result == null) return true;
+    if (typeof result !== 'object') return true;
+    const r = result as {
+      success?: boolean;
+      metadata?: { timedOut?: boolean };
+    };
+    if (r.success === true) return false;
+    return true;
+  }
+
+  /** Chuỗi JSON ổn định (sort key) để băm chữ ký tác vụ. */
+  private stableStringifyForSignature(obj: Record<string, unknown>): string {
+    const norm = (value: unknown): unknown => {
+      if (value === null || value === undefined) return value;
+      if (Array.isArray(value)) return value.map(norm);
+      if (typeof value === 'object') {
+        const o = value as Record<string, unknown>;
+        const out: Record<string, unknown> = {};
+        for (const k of Object.keys(o).sort()) {
+          out[k] = norm(o[k]);
+        }
+        return out;
+      }
+      return value;
+    };
+    return JSON.stringify(norm(obj));
+  }
+
+  private buildColleagueToolSignature(
+    skillCode: string,
+    params: Record<string, unknown>,
+  ): string {
+    const payload = `${skillCode}:${this.stableStringifyForSignature(params)}`;
+    return createHash('sha256').update(payload).digest('hex').slice(0, 40);
+  }
+
+  /** Gợi ý hiển thị trong báo cáo ngắt mạch (URL, query…). */
+  private formatParamHintForCircuitBreaker(
+    skillCode: string,
+    params: Record<string, unknown>,
+  ): string {
+    if (skillCode === 'web_fetch' && typeof params.url === 'string') {
+      return params.url;
+    }
+    if (skillCode === 'web_search' && typeof params.query === 'string') {
+      return params.query;
+    }
+    const s = this.stableStringifyForSignature(params);
+    return s.length > 220 ? `${s.slice(0, 220)}…` : s;
+  }
+
   private async executeToolCall(
     toolCall: IToolCall,
     context: IPipelineContext,
@@ -543,6 +616,45 @@ export class AgentRunStep {
       parsedArgs = {};
     }
 
+    const userLevel = context.metadata['pipelineUserLevel'] as
+      | UserLevel
+      | undefined;
+    const circuit =
+      userLevel === UserLevel.COLLEAGUE
+        ? (context.metadata[COLLEAGUE_PARAM_CIRCUIT_KEY] as
+            | ColleagueParamCircuitState
+            | undefined)
+        : undefined;
+
+    if (circuit) {
+      const signature = this.buildColleagueToolSignature(skillCode, parsedArgs);
+      const prev = circuit.failedActions[signature] ?? 0;
+      if (prev >= 3) {
+        const hint = this.formatParamHintForCircuitBreaker(skillCode, parsedArgs);
+        const blockedResult = {
+          success: false,
+          error:
+            `[System Report] Tham số '${hint}' đã bị lỗi kết nối 3 lần liên tiếp. ` +
+            `Yêu cầu Agent KHÔNG thử lại tham số này. ` +
+            `Hãy đổi sang giá trị khác (ví dụ URL khác như vnexpress) hoặc dùng tool khác.`,
+        };
+        this.logger.warn(
+          `[${context.runId}] Colleague param circuit OPEN (signature=${signature.slice(0, 12)}…)`,
+        );
+        const serialized = JSON.stringify(blockedResult);
+        return {
+          skillCode,
+          result: blockedResult,
+          record: {
+            skillCode,
+            result: blockedResult,
+            dataSize: serialized.length,
+            durationMs: Date.now() - start,
+          },
+        };
+      }
+    }
+
     // OpenClaw-like natural behavior: do not block tool execution based on
     // Vietnamese/English intent heuristics at runtime. Let model/tool result decide.
 
@@ -558,8 +670,26 @@ export class AgentRunStep {
         parameters: parsedArgs,
       });
       result = skillResult;
-    } catch (error) {
-      result = { success: false, error: error.message };
+    } catch (error: unknown) {
+      result = {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    if (circuit) {
+      const signature = this.buildColleagueToolSignature(skillCode, parsedArgs);
+      if (!this.isSkillToolFailure(result)) {
+        circuit.failedActions[signature] = 0;
+      } else {
+        const next = (circuit.failedActions[signature] ?? 0) + 1;
+        circuit.failedActions[signature] = next;
+        if (next >= 3) {
+          this.logger.warn(
+            `[${context.runId}] Colleague param circuit: 3 failures for signature ${signature.slice(0, 12)}… (next same params will short-circuit)`,
+          );
+        }
+      }
     }
 
     const serialized = JSON.stringify(result);

@@ -9,6 +9,9 @@ import {
   SkillCategory,
   SkillType,
 } from '../../interfaces/skill-runner.interface';
+import { UsersService } from '../../../../modules/users/users.service';
+import { UserLevel } from '../../../../modules/users/entities/user.entity';
+import { assertUrlSafeForFetch } from './url-ssrf-guard';
 
 const PARAMETERS_SCHEMA = {
   type: 'object',
@@ -46,7 +49,10 @@ const PARAMETERS_SCHEMA = {
 export class WebFetchSkill implements ISkillRunner {
   private readonly logger = new Logger(WebFetchSkill.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly usersService: UsersService,
+  ) {}
 
   get definition(): ISkillDefinition {
     return {
@@ -59,24 +65,56 @@ export class WebFetchSkill implements ISkillRunner {
     };
   }
 
+  /**
+   * Chặn SSRF (localhost / private IP / metadata) **chỉ trên production**.
+   * Trên dev (`NODE_ENV` ≠ `production`) mặc định **không** chặn — tiện test API nội bộ.
+   * Ghi đè: `WEB_FETCH_SSRF_STRICT=false` để tắt chặn kể cả khi build production (staging).
+   */
+  private isSsrfEnforced(): boolean {
+    if (process.env.NODE_ENV !== 'production') {
+      return false;
+    }
+    return (
+      String(this.configService.get('WEB_FETCH_SSRF_STRICT', 'true')).trim() !==
+      'false'
+    );
+  }
+
   async execute(context: ISkillExecutionContext): Promise<ISkillResult> {
     const start = Date.now();
     const { url, mode = 'markdown', maxChars = 20000 } = context.parameters;
+    const urlStr = String(url ?? '').trim();
 
     try {
+      const user = await this.usersService.findById(context.userId);
+      const allowPrivate =
+        user?.level === UserLevel.OWNER &&
+        String(this.configService.get('WEB_FETCH_ALLOW_PRIVATE_URLS', '')).trim() ===
+          'true';
+
+      if (this.isSsrfEnforced()) {
+        await assertUrlSafeForFetch(urlStr, { allowPrivate });
+      }
+
       const firecrawlKey = this.configService.get('FIRECRAWL_API_KEY');
 
       if (firecrawlKey) {
         return await this.fetchWithFirecrawl(
-          url as string,
+          urlStr,
           mode as string,
           firecrawlKey,
           maxChars as number,
           start,
+          context,
         );
       }
 
-      return await this.fetchDirect(url as string, maxChars as number, start);
+      return await this.fetchDirect(
+        urlStr,
+        maxChars as number,
+        start,
+        context,
+      );
     } catch (error) {
       this.logger.error(`Web fetch failed: ${error.message}`);
       return {
@@ -87,13 +125,23 @@ export class WebFetchSkill implements ISkillRunner {
     }
   }
 
+  private mergeFetchSignal(context: ISkillExecutionContext): AbortSignal {
+    const inner = AbortSignal.timeout(18_000);
+    if (context.signal) {
+      return AbortSignal.any([context.signal, inner]);
+    }
+    return inner;
+  }
+
   private async fetchWithFirecrawl(
     url: string,
     mode: string,
     apiKey: string,
     maxChars: number,
     start: number,
+    context: ISkillExecutionContext,
   ): Promise<ISkillResult> {
+    const signal = this.mergeFetchSignal(context);
     const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
@@ -104,6 +152,7 @@ export class WebFetchSkill implements ISkillRunner {
         url,
         formats: [mode === 'html' ? 'html' : 'markdown'],
       }),
+      signal,
     });
 
     if (!response.ok) {
@@ -133,10 +182,12 @@ export class WebFetchSkill implements ISkillRunner {
     url: string,
     maxChars: number,
     start: number,
+    context: ISkillExecutionContext,
   ): Promise<ISkillResult> {
+    const signal = this.mergeFetchSignal(context);
     const response = await fetch(url, {
       headers: { 'User-Agent': 'MiraBot/1.0' },
-      signal: AbortSignal.timeout(15000),
+      signal,
     });
 
     if (!response.ok) {
@@ -145,7 +196,6 @@ export class WebFetchSkill implements ISkillRunner {
 
     let text = await response.text();
 
-    // Naive HTML → text: strip tags
     text = text
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/<style[\s\S]*?<\/style>/gi, '')

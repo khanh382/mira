@@ -1746,7 +1746,7 @@ export class BrowserSkill implements ISkillRunner {
             }
             await this.page.goto(url as string, {
               waitUntil: 'domcontentloaded',
-              timeout: 28000,
+              timeout: 18000,
             });
             if (waitMs) await this.page.waitForTimeout(waitMs as number);
             const title = await this.page.title();
