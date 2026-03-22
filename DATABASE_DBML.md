@@ -1,6 +1,6 @@
 # Database Schema (DBDiagram / DBML)
 
-> Schema trích từ các entity trong `src/**/*.entity.ts` (thêm các bảng `agent_workflows`, `agent_workflow_steps`, `agent_workflow_runs`, `agent_workflow_run_steps` cho tiến trình OpenClaw; DDL `src/modules/agent-workflows/schema.sql`).
+> Schema trích từ các entity trong `src/**/*.entity.ts` (kể cả bảng tiến trình OpenClaw / workflow).
 > Có thể copy khối DBML vào [dbdiagram.io](https://dbdiagram.io).
 
 ```dbml
@@ -257,5 +257,5 @@ Table openclaw_messages {
 - `users.update_at` và `bot_users.update_at` (không phải `updated_at`) đúng tên cột TypeORM; `chat_threads` / `chat_messages` dùng `updated_at`.
 - `chat_threads` / `chat_messages`: cột `telegram_id`, `zalo_id`, `discord_id` theo kênh (nullable).
 - `chat_threads.active_openclaw_oa_id`: khi set, thread có thể proxy sang OpenClaw Gateway (xem `SYSTEM_COMMANDS.md`).
-- OpenClaw (`src/modules/openclaw-agents/`): đăng ký Gateway do user tự host; `openclaw_threads` / `openclaw_messages` tách khỏi `chat_*`. Cột `openclaw_messages.extra` là **JSONB** trong PostgreSQL (entity `jsonb`). DDL: `schema.sql`.
+- OpenClaw (`src/modules/openclaw-agents/`): đăng ký Gateway do user tự host; `openclaw_threads` / `openclaw_messages` tách khỏi `chat_*`. Cột `openclaw_messages.extra` là **JSONB** trong PostgreSQL (entity `jsonb`).
 - Tiến trình OpenClaw nối tiếp: `agent_workflow_runs.wr_summary`, **`wr_context`** (JSONB nhớ tạm điều phối); `agent_workflow_run_steps` lưu snapshot `oa_name_snapshot`, `oa_expertise_snapshot` và `wrs_metadata` (JSONB). Mô tả: `brains/_shared/WORKFLOW_RUN_HISTORY.md`.
