@@ -137,9 +137,9 @@ export class OpenclawChatService {
   private async buildAgentsListText(ownerUid: number): Promise<string> {
     const rows = await this.agentsService.listAgentsByOwner(ownerUid);
     const lines: string[] = [
-      '**Agent có sẵn**',
+      '**Các Agent có sẵn:**',
       '',
-      '- **system** — agent hệ thống (pipeline + brain trên backend này)',
+      '- **system** — agent hệ thống',
     ];
     for (const a of rows) {
       const st = a.status === OpenclawAgentStatus.ACTIVE ? 'active' : 'disabled';
@@ -149,7 +149,7 @@ export class OpenclawChatService {
     }
     lines.push(
       '',
-      '**Lệnh:** `/oa use system` | `/oa use <oa_id>` | `/oa new` (phiên mới) | `/agents`',
+      '**Lệnh:** `/oa use system` | `/oa use <oa_id>` | `/oa new` (phiên session mới) | `/agents`',
     );
     return lines.join('\n');
   }

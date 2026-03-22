@@ -18,15 +18,17 @@ Nguon: `src/gateway/gateway.service.ts`
   - Bat lai he thong sau stopall (owner).
 - `/menu`
   - Tom tat lenh he thong + gợi ý (cung noi dung menu bot).
+- `/agents` (cung `/oa list`)
+  - **Chi chu bot:** liet ke agent **system** va cac OpenClaw da dang ky (`openclaw_agents`). Dung `/oa use <oa_id>` de chon OpenClaw, `/oa use system` ve pipeline noi bo. Chi tiet trong noi dung `/menu`.
 
 ### 1.0 Menu tren Telegram / Discord / Zalo
 
 Nguon: `src/modules/bot-users/bot-platform-menu.ts`, `BotDeliveryService`, `BotBootstrapService`
 
-- **Telegram:** Sau khi `setWebhook` (va dinh ky bot sync), backend goi `setMyCommands` — user go `/` trong chat se thay cac lenh (menu, list_skills, list_other_skills, new_session, brain_tree, stop, resume, stopall, resumeall). **Khong** co `list_tools` tren menu (trung lap voi `/list_skills`; van go duoc `/list_tools` trong chat). Doc file trong brain user: `/brain_read <duong dan>` (xem `/menu`).
+- **Telegram:** Sau khi `setWebhook` (va dinh ky bot sync), backend goi `setMyCommands` — user go `/` trong chat se thay cac lenh (menu, agents, list_skills, list_other_skills, new_session, brain_tree, stop, resume, stopall, resumeall). **Khong** co `list_tools` tren menu (trung lap voi `/list_skills`; van go duoc `/list_tools` trong chat). Doc file trong brain user: `/brain_read <duong dan>` (xem `/menu`).
   - **Album (nhieu anh/video/file):** Telegram gui nhieu update cung `media_group_id`. Backend gom (debounce ~450ms), tai tat ca file, goi **mot lan** `handleMessage` voi `mediaPaths[]` + caption (neu co). Mot tin don le (khong album) van la mot file nhu truoc.
-- **Discord:** Dang ky **slash command** toan cuc (`PUT /applications/{id}/commands`). Interaction slash duoc map thanh `/ten_lenh` truoc khi vao gateway (giong go lenh trong chat).
-- **Zalo:** Khong co API tuong duong `setMyCommands`. User go `menu`, `lenh`, `help`, `lệnh` hoac `/menu` — tra loi noi dung `/menu` + **quick reply** (nut) cho mot so lenh (neu OA API chap nhan `quick_replies`).
+- **Discord:** Dang ky **slash command** toan cuc (`PUT /applications/{id}/commands`), gom `/agents`. Interaction slash duoc map thanh `/ten_lenh` truoc khi vao gateway (giong go lenh trong chat).
+- **Zalo:** Khong co API tuong duong `setMyCommands`. User go `menu`, `lenh`, `help`, `lệnh` hoac `/menu` — tra loi noi dung `/menu` + **quick reply** (nut) cho mot so lenh (neu OA API chap nhan `quick_replies`). Nut gom `/agents` (dau tien), `/list_skills`, `/list_other_skills`, `/new_session`, `/stop`.
 
 ### 1.1 Command-first parser (uu tien chay lenh truoc agent loop)
 

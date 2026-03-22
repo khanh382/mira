@@ -2,6 +2,7 @@
  * Lệnh hệ thống hiển thị trên Telegram (setMyCommands), Discord (slash),
  * và gợi ý nội dung /menu + Zalo quick reply.
  * Code tools: /list_skills. Skill thư mục shared: /list_other_skills.
+ * Agent: /agents (system + OpenClaw đã đăng ký).
  */
 
 export type BotMenuEntry = {
@@ -19,6 +20,12 @@ export const SYSTEM_BOT_MENU_ENTRIES: readonly BotMenuEntry[] = [
     telegramDescription:
       'Danh sách lệnh nhanh và gợi ý (cùng nội dung /menu)',
     discordDescription: 'Hiển thị các lệnh hệ thống và gợi ý',
+  },
+  {
+    command: 'agents',
+    telegramDescription:
+      'Agent system + OpenClaw của bạn; /oa use <id> để chọn OpenClaw',
+    discordDescription: 'Liệt kê agent system + OpenClaw (chủ bot)',
   },
   {
     command: 'list_skills',
@@ -70,11 +77,11 @@ export const ZALO_QUICK_MENU_BUTTONS: readonly {
   title: string;
   payload: string;
 }[] = [
+  { title: '/agents', payload: '/agents' },
   { title: '/list_skills', payload: '/list_skills' },
   { title: '/list_other', payload: '/list_other_skills' },
   { title: '/new_session', payload: '/new_session' },
   { title: '/stop', payload: '/stop' },
-  { title: 'menu', payload: '/menu' },
 ];
 
 export function buildMenuHelpText(): string {
@@ -84,6 +91,11 @@ export function buildMenuHelpText(): string {
     ...SYSTEM_BOT_MENU_ENTRIES.filter((e) => e.command !== 'menu').map(
       (e) => `/${e.command} — ${e.telegramDescription}`,
     ),
+    '',
+    'Agent (system + OpenClaw — chỉ chủ bot):',
+    '- /agents hoặc /oa list — xem agent hệ thống và OpenClaw đã đăng ký',
+    '- /oa use system — về agent hệ thống',
+    '- /oa use <oa_id> — chọn OpenClaw; /oa new — phiên OpenClaw mới',
     '',
     'Khác:',
     '- /brain_read [đường-dẫn] — thư mục: liệt kê con một cấp; file: nội dung. Bỏ trống = gốc user',
