@@ -46,6 +46,12 @@ lerna-debug.log*
 .temp
 .tmp
 
+# Dữ liệu brain local (session, cookies, workspace…); mẫu trong repo: brains.example/
+/brains/
+
+# Cookie Facebook tại root — không commit (hãy đặt trong thư mục workspace user)
+/facebook_cookies.json
+
 # gogcli local build
 .gogcli/
 
