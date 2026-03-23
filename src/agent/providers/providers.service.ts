@@ -95,7 +95,7 @@ export class ProvidersService {
     await this.ensureKeysLoaded();
   }
 
-  /** Model string giống agent (vd. `openai/gpt-4o-mini`, `deepseek/deepseek-chat`). */
+  /** Model string giống agent (vd. `openai/gpt-4o-mini`, `deepseek/deepseek-v3.2`). */
   canResolveModel(model: string): boolean {
     return this.resolveProvider(model) !== null;
   }

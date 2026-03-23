@@ -1034,7 +1034,7 @@ interface ILlmProvider {
 | OpenAI | gpt-4o, gpt-4o-mini, o1, o3-mini | `cof_openai_api_key` |
 | Anthropic | claude-sonnet-4, claude-opus-4 | `cof_anthropic_api_key` |
 | Gemini | gemini-2.5-pro, gemini-2.5-flash | `cof_gemini_api_key` |
-| DeepSeek | deepseek-chat, deepseek-reasoner | `cof_deepseek_api_key` |
+| DeepSeek | deepseek-v3.2 (router mặc định), deepseek-chat, deepseek-reasoner | `cof_deepseek_api_key` |
 | OpenRouter | Any model (meta-provider) | `cof_openrouter_api_key` |
 
 ---

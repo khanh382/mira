@@ -12,7 +12,11 @@ export class DeepSeekProvider implements ILlmProvider {
 
   readonly providerId = 'deepseek';
   readonly displayName = 'DeepSeek';
-  readonly supportedModels = ['deepseek-chat', 'deepseek-reasoner'];
+  readonly supportedModels = [
+    'deepseek-v3.2',
+    'deepseek-chat',
+    'deepseek-reasoner',
+  ];
 
   constructor(private readonly configService: ConfigService) {}
 

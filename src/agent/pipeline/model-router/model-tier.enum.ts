@@ -31,7 +31,7 @@ export interface ModelCandidate {
   provider: string;
   model: string;
   tier: ModelTier;
-  /** Full model ID for OpenRouter (e.g. "deepseek/deepseek-chat") */
+  /** Full model ID for OpenRouter (e.g. "deepseek/deepseek-v3.2") */
   openrouterModel?: string;
 }
 
@@ -51,10 +51,10 @@ export interface ModelCandidate {
 export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
   [ModelTier.CHEAP]: [
     {
-      id: 'deepseek/deepseek-chat',
+      id: 'deepseek/deepseek-v3.2',
       provider: 'deepseek',
-      model: 'deepseek-chat',
-      openrouterModel: 'deepseek/deepseek-chat',
+      model: 'deepseek-v3.2',
+      openrouterModel: 'deepseek/deepseek-v3.2',
       tier: ModelTier.CHEAP,
     },
     {
@@ -81,10 +81,10 @@ export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
 
   [ModelTier.SKILL]: [
     {
-      id: 'deepseek/deepseek-chat',
+      id: 'deepseek/deepseek-v3.2',
       provider: 'deepseek',
-      model: 'deepseek-chat',
-      openrouterModel: 'deepseek/deepseek-chat',
+      model: 'deepseek-v3.2',
+      openrouterModel: 'deepseek/deepseek-v3.2',
       tier: ModelTier.SKILL,
     },
     {
@@ -111,10 +111,10 @@ export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
 
   [ModelTier.PROCESSOR]: [
     {
-      id: 'deepseek/deepseek-chat',
+      id: 'deepseek/deepseek-v3.2',
       provider: 'deepseek',
-      model: 'deepseek-chat',
-      openrouterModel: 'deepseek/deepseek-chat',
+      model: 'deepseek-v3.2',
+      openrouterModel: 'deepseek/deepseek-v3.2',
       tier: ModelTier.PROCESSOR,
     },
     // Ollama local — phù hợp xử lý context dài offline
@@ -148,10 +148,10 @@ export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
       tier: ModelTier.EXPERT,
     },
     {
-      id: 'deepseek/deepseek-chat',
+      id: 'deepseek/deepseek-v3.2',
       provider: 'deepseek',
-      model: 'deepseek-chat',
-      openrouterModel: 'deepseek/deepseek-chat',
+      model: 'deepseek-v3.2',
+      openrouterModel: 'deepseek/deepseek-v3.2',
       tier: ModelTier.EXPERT,
     },
     // Local fallback cho expert tier (năng lực hạn chế nhưng vẫn hoạt động offline)
