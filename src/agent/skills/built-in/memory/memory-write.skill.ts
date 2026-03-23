@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { RegisterSkill } from '../../decorators/skill.decorator';
 import {
   ISkillRunner,
@@ -14,6 +14,7 @@ import {
   UserLevel,
 } from '../../../../modules/users/entities/user.entity';
 import { WorkspaceService } from '../../../../gateway/workspace/workspace.service';
+import { MemoryCompactionService } from '../../../learning/memory-compaction.service';
 import { createHash } from 'crypto';
 import {
   OWNER_SHARED_MARKDOWN_FILES,
@@ -105,6 +106,7 @@ export class MemoryWriteSkill implements ISkillRunner {
   constructor(
     private readonly usersService: UsersService,
     private readonly workspaceService: WorkspaceService,
+    @Optional() private readonly memoryCompaction?: MemoryCompactionService,
   ) {}
 
   get definition(): ISkillDefinition {
@@ -179,11 +181,17 @@ export class MemoryWriteSkill implements ISkillRunner {
             'read_shared_processes',
           );
 
-        case 'append_memory':
-          return this.appendMemory(identifier, content, start);
+        case 'append_memory': {
+          const r = this.appendMemory(identifier, content, start);
+          this.memoryCompaction?.scheduleCompactionIfNeeded(identifier);
+          return r;
+        }
 
-        case 'write_memory':
-          return this.writeMemory(identifier, content, start);
+        case 'write_memory': {
+          const r = this.writeMemory(identifier, content, start);
+          this.memoryCompaction?.scheduleCompactionIfNeeded(identifier);
+          return r;
+        }
 
         case 'append_daily':
           return this.appendDaily(identifier, content, start);

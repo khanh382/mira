@@ -816,6 +816,8 @@ export class WorkspaceService implements OnModuleInit {
       }
     };
 
+    const userContextMdPath = path.join(userWorkspaceDir, 'USER_CONTEXT.md');
+
     const fileMtimes = {
       identityPath: statMtime(identityPath),
       sharedSoulPath: statMtime(sharedSoulPath),
@@ -826,6 +828,7 @@ export class WorkspaceService implements OnModuleInit {
       userAgentsPath: statMtime(userAgentsPath),
       userToolsPath: statMtime(userToolsPath),
       userMdPath: statMtime(userMdPath),
+      userContextMdPath: statMtime(userContextMdPath),
       memoryMdPath: statMtime(memoryMdPath),
       googleDriveMdPath: statMtime(googleDriveMdPath),
       dailyMemoryFilePath: statMtime(dailyMemoryFilePath),
@@ -850,19 +853,44 @@ export class WorkspaceService implements OnModuleInit {
     this.appendUserWorkspaceOrShared(parts, userToolsPath, sharedToolsPath);
     this.appendSharedProcessesOnly(parts, sharedProcessesPath);
 
-    // USER.md / MEMORY / GOOGLE_DRIVE vẫn lấy từ workspace riêng của identifier
+    // USER.md / USER_CONTEXT / MEMORY / GOOGLE_DRIVE vẫn lấy từ workspace riêng của identifier
     const user = fs.existsSync(userMdPath) ? fs.readFileSync(userMdPath, 'utf-8') : null;
     if (user) parts.push(user);
 
-    const memory = fs.existsSync(memoryMdPath)
+    // USER_CONTEXT.md — tóm tắt xuyên phiên, inject nhẹ (tối đa 2000 ký tự)
+    const maxUserContextChars = this.resolveEnvInt('SYSTEM_CONTEXT_MAX_USER_CONTEXT_CHARS', 2000, 200, 8000);
+    const userContextRaw = fs.existsSync(userContextMdPath)
+      ? fs.readFileSync(userContextMdPath, 'utf-8').replace(/<!--[\s\S]*?-->/g, '').trim()
+      : null;
+    if (userContextRaw) {
+      const snippet = userContextRaw.length > maxUserContextChars
+        ? this.truncateKeepTail(userContextRaw, maxUserContextChars)
+        : userContextRaw;
+      parts.push(`## Bối cảnh người dùng (xuyên phiên)\n${snippet}`);
+    }
+
+    const maxMemoryChars = this.resolveEnvInt('SYSTEM_CONTEXT_MAX_MEMORY_CHARS', 6000, 500, 48000);
+    const maxDailyChars = this.resolveEnvInt('SYSTEM_CONTEXT_MAX_DAILY_CHARS', 3000, 500, 24000);
+
+    let memoryRaw = fs.existsSync(memoryMdPath)
       ? fs.readFileSync(memoryMdPath, 'utf-8')
       : null;
-    if (memory) parts.push(`## Long-term Memory\n${memory}`);
+    if (memoryRaw) {
+      if (memoryRaw.length > maxMemoryChars) {
+        memoryRaw = this.truncateKeepTail(memoryRaw, maxMemoryChars);
+      }
+      parts.push(`## Long-term Memory\n${memoryRaw}`);
+    }
 
-    const daily = fs.existsSync(dailyMemoryFilePath)
+    let dailyRaw = fs.existsSync(dailyMemoryFilePath)
       ? fs.readFileSync(dailyMemoryFilePath, 'utf-8')
       : null;
-    if (daily) parts.push(`## Today's Notes\n${daily}`);
+    if (dailyRaw) {
+      if (dailyRaw.length > maxDailyChars) {
+        dailyRaw = this.truncateKeepTail(dailyRaw, maxDailyChars);
+      }
+      parts.push(`## Today's Notes\n${dailyRaw}`);
+    }
 
     const drive = fs.existsSync(googleDriveMdPath)
       ? fs.readFileSync(googleDriveMdPath, 'utf-8')
@@ -912,6 +940,26 @@ export class WorkspaceService implements OnModuleInit {
       const s = fs.readFileSync(sharedPath, 'utf-8').trim();
       if (s) parts.push(s);
     }
+  }
+
+  /** Xóa cache system context cho user — gọi sau khi compact/ghi file workspace. */
+  invalidateSystemContextCache(identifier: string): void {
+    this.systemContextCache.delete(identifier);
+  }
+
+  /** Cắt giữ phần cuối (nội dung mới nhất) và tìm ranh giới dòng gần nhất. */
+  private truncateKeepTail(text: string, maxChars: number): string {
+    const tail = text.slice(-maxChars);
+    const firstNewline = tail.indexOf('\n');
+    const clean = firstNewline > 0 ? tail.slice(firstNewline + 1) : tail;
+    return '[… phần cũ đã lược bớt để giữ prompt gọn]\n' + clean;
+  }
+
+  private resolveEnvInt(key: string, defaultVal: number, min: number, max: number): number {
+    const raw = this.configService.get<string>(key);
+    const n = raw !== undefined && raw !== '' ? Number(raw) : NaN;
+    if (!Number.isFinite(n)) return defaultVal;
+    return Math.min(Math.max(Math.floor(n), min), max);
   }
 
   // ─── Skill Dirs (cho ClawhubLoader) ─────────────────────────────────

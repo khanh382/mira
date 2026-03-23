@@ -42,6 +42,11 @@ export interface ModelCandidate {
  * Fallback: nếu model ưu tiên không có API key → dùng model tiếp theo.
  * OpenRouter: dùng làm universal fallback — nếu có openrouter key,
  * mọi model đều khả dụng qua openrouter.
+ *
+ * Local LLM (Ollama / LM Studio): xếp CUỐI trong CHEAP và SKILL tier —
+ * dùng làm offline fallback khi không có cloud provider.
+ * Model name mặc định: ollama/llama3.2, lmstudio/local-model.
+ * Ghi đè bằng DEFAULT_MODEL hoặc CONTEXT_FOCUS_MODEL nếu muốn dùng model khác.
  */
 export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
   [ModelTier.CHEAP]: [
@@ -57,6 +62,19 @@ export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
       provider: 'openai',
       model: 'gpt-4o-mini',
       openrouterModel: 'openai/gpt-4o-mini',
+      tier: ModelTier.CHEAP,
+    },
+    // Local fallbacks — chỉ dùng khi không có cloud provider
+    {
+      id: 'ollama/llama3.2',
+      provider: 'ollama',
+      model: 'llama3.2',
+      tier: ModelTier.CHEAP,
+    },
+    {
+      id: 'lmstudio/local-model',
+      provider: 'lmstudio',
+      model: 'local-model',
       tier: ModelTier.CHEAP,
     },
   ],
@@ -76,6 +94,19 @@ export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
       openrouterModel: 'openai/gpt-4o',
       tier: ModelTier.SKILL,
     },
+    // Local fallbacks
+    {
+      id: 'ollama/llama3.2',
+      provider: 'ollama',
+      model: 'llama3.2',
+      tier: ModelTier.SKILL,
+    },
+    {
+      id: 'lmstudio/local-model',
+      provider: 'lmstudio',
+      model: 'local-model',
+      tier: ModelTier.SKILL,
+    },
   ],
 
   [ModelTier.PROCESSOR]: [
@@ -84,6 +115,19 @@ export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
       provider: 'deepseek',
       model: 'deepseek-chat',
       openrouterModel: 'deepseek/deepseek-chat',
+      tier: ModelTier.PROCESSOR,
+    },
+    // Ollama local — phù hợp xử lý context dài offline
+    {
+      id: 'ollama/llama3.2',
+      provider: 'ollama',
+      model: 'llama3.2',
+      tier: ModelTier.PROCESSOR,
+    },
+    {
+      id: 'lmstudio/local-model',
+      provider: 'lmstudio',
+      model: 'local-model',
       tier: ModelTier.PROCESSOR,
     },
   ],
@@ -108,6 +152,13 @@ export const MODEL_PRIORITY: Record<ModelTier, ModelCandidate[]> = {
       provider: 'deepseek',
       model: 'deepseek-chat',
       openrouterModel: 'deepseek/deepseek-chat',
+      tier: ModelTier.EXPERT,
+    },
+    // Local fallback cho expert tier (năng lực hạn chế nhưng vẫn hoạt động offline)
+    {
+      id: 'ollama/llama3.2',
+      provider: 'ollama',
+      model: 'llama3.2',
       tier: ModelTier.EXPERT,
     },
   ],

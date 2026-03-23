@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import {
   ThreadResolverService,
   ResolvedThread,
@@ -18,6 +18,7 @@ import { User, UserLevel } from '../modules/users/entities/user.entity';
 import { UsersService } from '../modules/users/users.service';
 import { ThreadsService } from '../modules/chat/threads.service';
 import { OpenclawChatService } from '../modules/openclaw-agents/openclaw-chat.service';
+import { PreferenceExtractorService } from '../agent/learning/preference-extractor.service';
 import { createHash } from 'crypto';
 import { buildMenuHelpText } from '../modules/bot-users/bot-platform-menu';
 import { sanitizeLlmDisplayLeakage } from '../modules/bot-users/llm-output-sanitize';
@@ -43,6 +44,9 @@ export class GatewayService {
   private readonly recentInboundKeys = new Map<string, number>(); // key -> firstSeenAtMs
   private readonly recentInboundTtlDefaultMs = 10 * 1000; // 10s for content-hash
   private readonly recentInboundTtlWithIdMs = 5 * 60 * 1000; // 5m for explicit upstream id
+
+  /** Đếm lượt assistant reply per thread — trigger preference extraction mỗi N lượt. */
+  private readonly prefExtractTurnCount = new Map<string, number>();
 
   private isDuplicateInbound(key: string, ttlMs: number): boolean {
     const now = Date.now();
@@ -220,6 +224,19 @@ export class GatewayService {
       identifier: user.identifier,
       threadId,
     });
+
+    // Trigger preference extraction mỗi N lượt (mặc định 5)
+    if (this.preferenceExtractor) {
+      const interval = this.resolvePrefExtractInterval();
+      const count = (this.prefExtractTurnCount.get(threadId) ?? 0) + 1;
+      this.prefExtractTurnCount.set(threadId, count);
+      if (count % interval === 0) {
+        this.preferenceExtractor.scheduleExtraction({
+          userId: user.uid,
+          threadId,
+        });
+      }
+    }
   }
 
   private async tryHandleCommandFirst(
@@ -480,6 +497,7 @@ export class GatewayService {
     private readonly configService: ConfigService,
     private readonly stopAllService: StopAllService,
     private readonly usersService: UsersService,
+    @Optional() private readonly preferenceExtractor?: PreferenceExtractorService,
   ) {}
 
   /**
@@ -569,6 +587,23 @@ export class GatewayService {
     return true;
   }
 
+  /**
+   * Khi client gửi threadId cụ thể → dùng thread đó (nếu thuộc user), bỏ qua auto-resolve.
+   * Cho phép multi-session giống Cursor.
+   */
+  private async resolveExplicitThread(
+    userId: number,
+    threadId: string,
+  ): Promise<ResolvedThread | null> {
+    const specific = await this.threadsService.findById(threadId);
+    if (!specific || specific.userId !== userId) return null;
+    const user = await this.usersService.findById(userId);
+    if (!user) return null;
+    await this.workspaceService.ensureUserWorkspace(user.identifier);
+    await this.threadsService.touch(specific.id);
+    return { user, thread: specific, isNew: false };
+  }
+
   async handleMessage(
     userId: number,
     content: string,
@@ -603,11 +638,10 @@ export class GatewayService {
       discordId: options?.discordUserId,
     };
 
-    let { user, thread, isNew } = await this.threadResolver.resolve(
-      userId,
-      platform,
-      actor,
-    );
+    let { user, thread, isNew } = options?.threadId
+      ? (await this.resolveExplicitThread(userId, options.threadId)) ??
+        (await this.threadResolver.resolve(userId, platform, actor))
+      : await this.threadResolver.resolve(userId, platform, actor);
 
     const normalized = content.trim().toLowerCase();
 
@@ -986,6 +1020,18 @@ export class GatewayService {
       // For `/new_session`: only reset thread + persist messages to JSONL.
       // Creating a Markdown `.md` session note file is not required here.
       if (isNewSessionCommand) {
+        // Distill nội dung thread đang đóng → MEMORY.md (chạy ngầm trước khi reset)
+        this.sessionContextFocusService.scheduleThreadCloseSummary({
+          identifier: user.identifier,
+          closingThreadId: thread.id,
+        });
+
+        // Extract preferences từ thread đang đóng (chạy ngầm)
+        this.preferenceExtractor?.scheduleExtraction({
+          userId: user.uid,
+          threadId: thread.id,
+        });
+
         const jsonPath = this.workspaceService.getThreadFilePath(
           user.identifier,
           thread.id,
@@ -1165,5 +1211,12 @@ export class GatewayService {
 
   getStatus() {
     return this.agentService.getStatus();
+  }
+
+  private resolvePrefExtractInterval(): number {
+    const raw = this.configService.get<string>('PREFERENCE_EXTRACT_INTERVAL');
+    const n = raw !== undefined && raw !== '' ? Number(raw) : NaN;
+    if (!Number.isFinite(n) || n < 2) return 5;
+    return Math.min(Math.floor(n), 50);
   }
 }

@@ -36,7 +36,7 @@ export const databaseConfig = (
     password: configService.get('DB_PASSWORD', 'postgres'),
     database: configService.get('DB_DATABASE', 'my_project'),
     entities: [__dirname + '/../**/*.entity{.ts,.js}'],
-    synchronize: false,
+    synchronize: configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
     logging: false,
   };
 };

@@ -34,6 +34,20 @@ export class GlobalConfigService {
     return keyMap[provider] ?? null;
   }
 
+  /** Trả về config Ollama (baseUrl + apiKey) hoặc null nếu chưa cấu hình. */
+  async getOllamaConfig(): Promise<{ baseUrl: string; apiKey?: string | null } | null> {
+    const config = await this.getConfig();
+    if (!config?.ollama?.baseUrl?.trim()) return null;
+    return config.ollama;
+  }
+
+  /** Trả về config LM Studio (baseUrl + apiKey) hoặc null nếu chưa cấu hình. */
+  async getLmsConfig(): Promise<{ baseUrl: string; apiKey?: string | null } | null> {
+    const config = await this.getConfig();
+    if (!config?.lmStudio?.baseUrl?.trim()) return null;
+    return config.lmStudio;
+  }
+
   async updateConfig(data: Partial<Config>): Promise<Config> {
     let config = await this.getConfig();
     if (!config) {

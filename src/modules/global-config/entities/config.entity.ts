@@ -35,6 +35,21 @@ export class Config {
   @Column({ name: 'cof_firecrawl_api_key', nullable: true })
   firecrawlApiKey: string;
 
+  // ─── Local LLM (Ollama / LM Studio) ───────────────────────────────
+  /**
+   * JSON: { "baseUrl": "http://localhost:11434", "apiKey": null }
+   * apiKey: bỏ qua nếu Ollama không dùng auth.
+   */
+  @Column({ name: 'cof_ollama', type: 'jsonb', nullable: true })
+  ollama: { baseUrl: string; apiKey?: string | null } | null;
+
+  /**
+   * JSON: { "baseUrl": "http://localhost:1234", "apiKey": null }
+   * LM Studio mặc định không cần apiKey khi chạy local.
+   */
+  @Column({ name: 'cof_lms', type: 'jsonb', nullable: true })
+  lmStudio: { baseUrl: string; apiKey?: string | null } | null;
+
   // ─── Scheduler / Heartbeat (quy tắc chung cho cron & heartbeat) ───
   /** Số lần thử lại tối đa trong 1 lượt tick (mặc định 3). Áp dụng cho mọi user. */
   @Column({ name: 'cof_scheduler_max_retries_per_tick', nullable: true })

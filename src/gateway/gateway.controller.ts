@@ -26,6 +26,7 @@ export class GatewayController {
       model: dto.model,
       mediaUrl: dto.mediaUrl,
       mediaPath: dto.mediaPath,
+      threadId: dto.threadId,
     });
   }
 

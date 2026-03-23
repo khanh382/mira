@@ -75,6 +75,14 @@ export class ModelRouterService {
       }
     }
 
+    // Local LLM: kiểm tra baseUrl trong JSON config (không cần API key)
+    if (config.ollama?.baseUrl?.trim()) {
+      this.availableProviders.add('ollama');
+    }
+    if (config.lmStudio?.baseUrl?.trim()) {
+      this.availableProviders.add('lmstudio');
+    }
+
     this.hasOpenRouter = this.availableProviders.has('openrouter');
     this.initialized = true;
 

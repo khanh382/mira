@@ -4,6 +4,7 @@ import { BrowserDomPresetLearnService } from './browser-dom-preset-learn.service
 import { TaskMemoryService } from './task-memory.service';
 import { SkillDraftEnrichmentService } from './skill-draft-enrichment.service';
 import { SessionContextFocusService } from './session-context-focus.service';
+import { MemoryManagerService } from './memory-manager.service';
 import { UsersModule } from '../../modules/users/users.module';
 import { ChatModule } from '../../modules/chat/chat.module';
 import { ProvidersModule } from '../../agent/providers/providers.module';
@@ -17,6 +18,7 @@ import { ModelRouterModule } from '../../agent/pipeline/model-router/model-route
     TaskMemoryService,
     SkillDraftEnrichmentService,
     SessionContextFocusService,
+    MemoryManagerService,
   ],
   exports: [
     WorkspaceService,
@@ -24,6 +26,7 @@ import { ModelRouterModule } from '../../agent/pipeline/model-router/model-route
     TaskMemoryService,
     SkillDraftEnrichmentService,
     SessionContextFocusService,
+    MemoryManagerService,
   ],
 })
 export class WorkspaceModule {}

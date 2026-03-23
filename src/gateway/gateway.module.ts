@@ -20,6 +20,7 @@ import { BotUsersModule } from '../modules/bot-users/bot-users.module';
 import { ChatModule } from '../modules/chat/chat.module';
 import { AgentModule } from '../agent/agent.module';
 import { OpenclawAgentsModule } from '../modules/openclaw-agents/openclaw-agents.module';
+import { LearningModule } from '../agent/learning/learning.module';
 
 import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
 
@@ -32,6 +33,7 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
     AgentModule,
     OpenclawAgentsModule,
     WorkspaceModule,
+    LearningModule,
     TypeOrmModule.forFeature([BotUser]),
   ],
   controllers: [

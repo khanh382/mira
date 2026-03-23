@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HooksService } from '../../hooks/hooks.service';
 import {
@@ -14,6 +14,8 @@ import { ChatService } from '../../../modules/chat/chat.service';
 import { UsersService } from '../../../modules/users/users.service';
 import { WorkspaceService } from '../../../gateway/workspace/workspace.service';
 import { SessionContextFocusService } from '../../../gateway/workspace/session-context-focus.service';
+import { VectorizationService } from '../../learning/vectorization.service';
+import { PreferenceExtractorService } from '../../learning/preference-extractor.service';
 
 const DEFAULT_HISTORY_LIMIT = 30;
 const MAX_HISTORY_LIMIT_CAP = 120;
@@ -36,6 +38,8 @@ export class PreprocessStep {
     private readonly workspaceService: WorkspaceService,
     private readonly configService: ConfigService,
     private readonly sessionContextFocusService: SessionContextFocusService,
+    @Optional() private readonly vectorizationService?: VectorizationService,
+    @Optional() private readonly preferenceExtractor?: PreferenceExtractorService,
   ) {}
 
   async execute(context: IPipelineContext): Promise<IPipelineContext> {
@@ -46,6 +50,15 @@ export class PreprocessStep {
 
     // ─── 2. Load recent conversation history from DB ──────
     await this.loadConversationHistory(context);
+
+    // ─── 2b. Char budget: cắt tin cũ nhất nếu tổng vượt ngân sách ký tự ──
+    this.capHistoryByCharBudget(context);
+
+    // ─── 2c. Auto-inject semantic memory (chạy song song, không block nếu lỗi) ──
+    await this.autoInjectSemanticMemory(context);
+
+    // ─── 2d. Inject structured user preferences (DB) ──
+    await this.injectUserPreferences(context);
 
     await this.appendSessionFocusToSystemContext(context);
 
@@ -215,6 +228,191 @@ export class PreprocessStep {
     const n = raw !== undefined && raw !== '' ? Number(raw) : NaN;
     if (!Number.isFinite(n) || n < 1) return DEFAULT_HISTORY_LIMIT;
     return Math.min(Math.floor(n), MAX_HISTORY_LIMIT_CAP);
+  }
+
+  /**
+   * Giới hạn tổng ký tự conversation history (user+assistant) — bổ sung CHAT_HISTORY_LIMIT (đếm message).
+   * Khi tổng vượt ngân sách, loại bỏ tin cũ nhất (giữ system messages nguyên).
+   */
+  private capHistoryByCharBudget(context: IPipelineContext): void {
+    const maxChars = this.resolveHistoryMaxChars();
+    const systemMessages = context.conversationHistory.filter(
+      (m) => m.role === 'system',
+    );
+    const chatMessages = context.conversationHistory.filter(
+      (m) => m.role !== 'system',
+    );
+
+    let total = chatMessages.reduce(
+      (sum, m) => sum + (m.content?.length ?? 0),
+      0,
+    );
+    if (total <= maxChars) return;
+
+    const before = chatMessages.length;
+    while (total > maxChars && chatMessages.length > 2) {
+      const removed = chatMessages.shift()!;
+      total -= removed.content?.length ?? 0;
+    }
+
+    context.conversationHistory = [...systemMessages, ...chatMessages];
+    this.logger.debug(
+      `[${context.runId}] History char budget: trimmed ${before - chatMessages.length} messages (${total} chars kept, budget=${maxChars})`,
+    );
+  }
+
+  private resolveHistoryMaxChars(): number {
+    const raw = this.configService.get<string>('CHAT_HISTORY_MAX_CHARS');
+    const n = raw !== undefined && raw !== '' ? Number(raw) : NaN;
+    if (!Number.isFinite(n) || n < 1000) return 32000;
+    return Math.min(Math.floor(n), 128000);
+  }
+
+  /**
+   * Tra cứu semantic memory ngầm dựa trên tin nhắn user cuối cùng.
+   * Nếu VectorizationService không sẵn hoặc không có embedding key → bỏ qua.
+   * Kết quả được append vào system message (tránh làm rối conversation turns).
+   */
+  private async autoInjectSemanticMemory(
+    context: IPipelineContext,
+  ): Promise<void> {
+    if (!this.vectorizationService) return;
+    if (this.configService.get<string>('SEMANTIC_INJECT_DISABLED') === 'true')
+      return;
+
+    const userId = context.userId;
+    if (!userId) return;
+
+    const lastUserMsg = [...context.conversationHistory]
+      .reverse()
+      .find((m) => m.role === 'user');
+    const query = (lastUserMsg?.content ?? '').trim().slice(0, 500);
+    if (!query || query.length < 20) return;
+
+    try {
+      const maxResults = 4;
+      const minScore = 0.72;
+      const results = await this.vectorizationService.search(userId, query, {
+        maxResults,
+        minScore,
+      });
+      if (!results.length) return;
+
+      const block = results
+        .map(
+          (r, i) =>
+            `${i + 1}. [${r.role}, ${r.createdAt?.slice(0, 10) ?? '?'}] ${r.content.slice(0, 400)}`,
+        )
+        .join('\n');
+
+      const injection =
+        `## Ký ức liên quan (tìm tự động — độ chính xác ngữ nghĩa)\n` +
+        `Những đoạn sau từ lịch sử cũ CÓ THỂ liên quan đến câu hỏi hiện tại:\n` +
+        block;
+
+      const sysIdx = context.conversationHistory.findIndex(
+        (m) => m.role === 'system',
+      );
+      if (sysIdx >= 0) {
+        context.conversationHistory[sysIdx] = {
+          ...context.conversationHistory[sysIdx],
+          content:
+            (context.conversationHistory[sysIdx].content ?? '') +
+            '\n\n' +
+            injection,
+        };
+      } else {
+        context.conversationHistory.unshift({
+          role: 'system',
+          content: injection,
+        });
+      }
+
+      this.logger.debug(
+        `[${context.runId}] Injected ${results.length} semantic memory hits.`,
+      );
+    } catch (e) {
+      this.logger.debug(
+        `[${context.runId}] Semantic inject skipped: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Inject structured user preferences từ DB vào system prompt.
+   * Chỉ đọc DB, không gọi LLM. Nếu DB không sẵn hoặc không có prefs → bỏ qua.
+   */
+  private async injectUserPreferences(
+    context: IPipelineContext,
+  ): Promise<void> {
+    if (!this.preferenceExtractor) return;
+
+    const userId = context.userId;
+    if (!userId) return;
+
+    try {
+      const prefs = await this.preferenceExtractor.getTopPreferences(
+        userId,
+        20,
+        0.4,
+      );
+      if (!prefs.length) return;
+
+      const grouped = new Map<string, string[]>();
+      for (const p of prefs) {
+        if (p.confidence < 0.4) continue;
+        const pct = Math.round(p.confidence * 100);
+        const line = `${p.key}=${p.value} (${pct}%)`;
+        const existing = grouped.get(p.category) ?? [];
+        existing.push(line);
+        grouped.set(p.category, existing);
+      }
+
+      if (grouped.size === 0) return;
+
+      const categoryLabels: Record<string, string> = {
+        communication: 'Giao tiếp',
+        tool_usage: 'Công cụ',
+        response_format: 'Phong cách trả lời',
+        domain_knowledge: 'Kiến thức chuyên môn',
+        scheduling: 'Lịch trình',
+        delegation: 'Phân công',
+      };
+
+      const lines: string[] = [];
+      for (const [cat, items] of grouped) {
+        const label = categoryLabels[cat] ?? cat;
+        lines.push(`**${label}:** ${items.join(', ')}`);
+      }
+
+      const block =
+        `## Sở thích người dùng (học tự động — confidence cao → đáng tin hơn)\n` +
+        lines.join('\n');
+
+      // Budget: tối đa 1500 ký tự
+      const injection = block.length > 1500 ? block.slice(0, 1500) + '…' : block;
+
+      const sysIdx = context.conversationHistory.findIndex(
+        (m) => m.role === 'system',
+      );
+      if (sysIdx >= 0) {
+        context.conversationHistory[sysIdx] = {
+          ...context.conversationHistory[sysIdx],
+          content:
+            (context.conversationHistory[sysIdx].content ?? '') +
+            '\n\n' +
+            injection,
+        };
+      }
+
+      this.logger.debug(
+        `[${context.runId}] Injected ${prefs.length} user preferences.`,
+      );
+    } catch (e) {
+      this.logger.debug(
+        `[${context.runId}] Preference inject skipped: ${(e as Error).message}`,
+      );
+    }
   }
 
   private maybePruneIrrelevantHistory(

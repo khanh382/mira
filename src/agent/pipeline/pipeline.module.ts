@@ -13,6 +13,7 @@ import { ChatModule } from '../../modules/chat/chat.module';
 import { UsersModule } from '../../modules/users/users.module';
 import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
 import { ControlModule } from '../control/control.module';
+import { LearningModule } from '../learning/learning.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ControlModule } from '../control/control.module';
     UsersModule,
     WorkspaceModule,
     ControlModule,
+    LearningModule,
   ],
   providers: [
     PipelineService,

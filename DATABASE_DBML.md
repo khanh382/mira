@@ -19,6 +19,10 @@ Table config {
   cof_firecrawl_api_key varchar [null]
   cof_scheduler_max_retries_per_tick integer [null]
   cof_scheduler_max_consecutive_failed_ticks integer [null]
+  // Local LLM — JSON: { "baseUrl": "http://localhost:11434", "apiKey": null }
+  cof_ollama jsonb [null]
+  // Local LLM — JSON: { "baseUrl": "http://localhost:1234", "apiKey": null }
+  cof_lms jsonb [null]
 }
 
 // Tài khoản người dùng: đăng nhập, kênh liên kết, vai trò (owner/colleague/client).
@@ -100,6 +104,41 @@ Table chat_messages {
   Indexes {
     (thread_id, created_at)
     (is_vectorized)
+  }
+}
+
+// Sở thích / thói quen user học từ lịch sử chat (Phase 4): category + key + value, confidence, stable.
+Table user_preferences {
+  pref_id uuid [pk]
+  uid integer [ref: > users.uid]
+  category varchar(64)
+  pref_key varchar(255)
+  pref_value text
+  confidence float [default: 0.5]
+  evidence_count integer [default: 1]
+  is_stable boolean [default: false]
+  last_seen_at timestamptz
+  created_at timestamptz
+  updated_at timestamptz
+
+  Indexes {
+    (uid, category, pref_key) [unique]
+    (uid, confidence)
+  }
+}
+
+// Log bằng chứng mỗi lần extract/cập nhật preference (thread, loại evidence).
+Table user_preference_logs {
+  pl_id uuid [pk]
+  pref_id uuid [ref: > user_preferences.pref_id]
+  uid integer [ref: > users.uid]
+  thread_id uuid [ref: > chat_threads.thread_id]
+  evidence_type varchar(32)
+  evidence_text text [null]
+  created_at timestamptz
+
+  Indexes {
+    (uid)
   }
 }
 
@@ -259,3 +298,4 @@ Table openclaw_messages {
 - `chat_threads.active_openclaw_oa_id`: khi set, thread có thể proxy sang OpenClaw Gateway (xem `SYSTEM_COMMANDS.md`).
 - OpenClaw (`src/modules/openclaw-agents/`): đăng ký Gateway do user tự host; `openclaw_threads` / `openclaw_messages` tách khỏi `chat_*`. Cột `openclaw_messages.extra` là **JSONB** trong PostgreSQL (entity `jsonb`).
 - Tiến trình OpenClaw nối tiếp: `agent_workflow_runs.wr_summary`, **`wr_context`** (JSONB nhớ tạm điều phối); `agent_workflow_run_steps` lưu snapshot `oa_name_snapshot`, `oa_expertise_snapshot` và `wrs_metadata` (JSONB). Mô tả: `brains/_shared/WORKFLOW_RUN_HISTORY.md`.
+- **User preferences (Phase 4):** `user_preferences` — một dòng / (uid, category, pref_key); `category` là chuỗi (vd. `communication`, `tool_usage`, …). `user_preference_logs` — FK logic tới `pref_id`; `thread_id` trỏ thread nơi có bằng chứng. Xem entity: `src/modules/users/entities/user-preference*.entity.ts`. Dev có thể bật `DB_SYNCHRONIZE=true` để TypeORM tạo bảng; production nên migration tay.

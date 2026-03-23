@@ -19,6 +19,8 @@ import { AnthropicProvider } from './providers/anthropic/anthropic.provider';
 import { GeminiProvider } from './providers/gemini/gemini.provider';
 import { DeepSeekProvider } from './providers/deepseek/deepseek.provider';
 import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
+import { OllamaProvider } from './providers/local-llm/ollama.provider';
+import { LmStudioProvider } from './providers/local-llm/lmstudio.provider';
 import { TelegramChannel } from './channels/telegram/telegram.channel';
 import { DiscordChannel } from './channels/discord/discord.channel';
 import { ZaloChannel } from './channels/zalo/zalo.channel';
@@ -40,6 +42,8 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly geminiProvider: GeminiProvider,
     @Optional() private readonly deepseekProvider: DeepSeekProvider,
     @Optional() private readonly openrouterProvider: OpenRouterProvider,
+    @Optional() private readonly ollamaProvider: OllamaProvider,
+    @Optional() private readonly lmStudioProvider: LmStudioProvider,
     // Channel adapters
     @Optional() private readonly telegramChannel: TelegramChannel,
     @Optional() private readonly discordChannel: DiscordChannel,
@@ -57,6 +61,8 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
       this.geminiProvider,
       this.deepseekProvider,
       this.openrouterProvider,
+      this.ollamaProvider,
+      this.lmStudioProvider,
     ];
     for (const provider of providers) {
       if (provider) this.providersService.registerProvider(provider);

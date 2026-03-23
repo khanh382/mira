@@ -24,6 +24,8 @@ import { AnthropicProvider } from './providers/anthropic/anthropic.provider';
 import { GeminiProvider } from './providers/gemini/gemini.provider';
 import { DeepSeekProvider } from './providers/deepseek/deepseek.provider';
 import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
+import { OllamaProvider } from './providers/local-llm/ollama.provider';
+import { LmStudioProvider } from './providers/local-llm/lmstudio.provider';
 
 @Module({
   imports: [
@@ -53,6 +55,8 @@ import { OpenRouterProvider } from './providers/openrouter/openrouter.provider';
     GeminiProvider,
     DeepSeekProvider,
     OpenRouterProvider,
+    OllamaProvider,
+    LmStudioProvider,
   ],
   exports: [AgentService, SkillsModule, ControlModule],
 })
