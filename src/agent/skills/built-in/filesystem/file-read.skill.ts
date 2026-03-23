@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import { RegisterSkill } from '../../decorators/skill.decorator';
+import { UsersService } from '../../../../modules/users/users.service';
+import { UserLevel } from '../../../../modules/users/entities/user.entity';
+import { WorkspaceService } from '../../../../gateway/workspace/workspace.service';
 import {
   ISkillDefinition,
   ISkillExecutionContext,
@@ -49,6 +52,11 @@ const ALLOWED_EXT = new Set([
 })
 @Injectable()
 export class FileReadSkill implements ISkillRunner {
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly workspaceService: WorkspaceService,
+  ) {}
+
   get definition(): ISkillDefinition {
     return {
       code: 'file_read',
@@ -95,14 +103,74 @@ export class FileReadSkill implements ISkillRunner {
       };
     }
 
+    // ─── Access guard by role + brain scope ───────────────────────────
+    const user = await this.usersService.findById(context.userId);
+    if (!user) {
+      return {
+        success: false,
+        error: 'User not found.',
+        metadata: { durationMs: Date.now() - start },
+      };
+    }
+
+    const target = fs.realpathSync(filePath);
+    const brainDir = path.resolve(this.workspaceService.getBrainDir());
+    const sharedDir = path.resolve(path.join(brainDir, '_shared'));
+    const ownUserDir = path.resolve(this.workspaceService.getUserDir(user.identifier));
+
+    const isUnder = (root: string, p: string): boolean => {
+      const r = path.resolve(root);
+      const x = path.resolve(p);
+      return x === r || x.startsWith(r + path.sep);
+    };
+
+    const deny = (msg: string): ISkillResult => ({
+      success: false,
+      error: msg,
+      metadata: { durationMs: Date.now() - start },
+    });
+
+    // non-owner: chỉ đọc trong chính $BRAIN_DIR/<identifier>/, cấm _shared
+    if (user.level !== UserLevel.OWNER) {
+      if (!isUnder(ownUserDir, target)) {
+        return deny(
+          'Access denied: non-owner chỉ được đọc trong $BRAIN_DIR/<identifier>/ của chính mình.',
+        );
+      }
+      if (isUnder(sharedDir, target)) {
+        return deny('Access denied: non-owner không được đọc nội dung trong $BRAIN_DIR/_shared/.');
+      }
+    } else {
+      // owner: cho phép đọc _shared + thư mục của chính owner.
+      // Nếu đọc thư mục user khác thì chặn đường dẫn nhạy cảm.
+      const underOwn = isUnder(ownUserDir, target);
+      const underShared = isUnder(sharedDir, target);
+      if (!underOwn && !underShared && isUnder(brainDir, target)) {
+        const relBrain = path.relative(brainDir, target).replace(/\\/g, '/');
+        const first = relBrain.split('/')[0] ?? '';
+        if (first && first !== '_shared' && first !== user.identifier) {
+          const relUnderOther = relBrain.slice(first.length + 1).toLowerCase();
+          const sensitive =
+            relUnderOther.startsWith('cookies/') ||
+            relUnderOther.includes('/cookies/') ||
+            /(^|\/)http[-_]?tokens?\.json$/i.test(relUnderOther);
+          if (sensitive) {
+            return deny(
+              'Access denied: không được đọc đường dẫn nhạy cảm (cookies/http-tokens.json) của user khác.',
+            );
+          }
+        }
+      }
+    }
+
     try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
+      const raw = fs.readFileSync(target, 'utf-8');
       const truncated = raw.length > maxChars;
       const content = truncated ? raw.slice(0, maxChars) : raw;
       return {
         success: true,
         data: {
-          filePath,
+          filePath: target,
           extension: ext,
           content,
           chars: raw.length,
