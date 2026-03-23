@@ -165,7 +165,13 @@ export class AgentWorkflowQueueService implements OnModuleInit, OnModuleDestroy 
         }
         await this.runOneJob(runId);
       },
-      { connection, concurrency: 2 },
+      {
+        connection,
+        concurrency: Math.max(
+          1,
+          Number(this.config.get('WORKFLOW_CONCURRENCY', '2')),
+        ),
+      },
     );
     this.worker.on('error', (err) => {
       this.logger.error(`BullMQ worker error: ${err.message}`);

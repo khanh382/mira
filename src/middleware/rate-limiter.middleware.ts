@@ -15,15 +15,28 @@ interface RateLimitInfo {
 @Injectable()
 export class RateLimiterMiddleware implements NestMiddleware {
   private readonly requestMap = new Map<string, RateLimitInfo>();
-  private readonly WINDOW_SIZE_IN_MINUTES = 1; // Thời gian cửa sổ (phút)
-  private readonly MAX_REQUESTS = 100; // Số request tối đa trong cửa sổ
+  private readonly WINDOW_SIZE_IN_MINUTES = 1;
+  private readonly MAX_REQUESTS = 100;
+
+  /** Dọn dẹp các entry đã hết window để tránh memory leak khi số lượng IP tăng. */
+  private cleanExpired(): void {
+    if (this.requestMap.size < 500) return;
+    const now = Date.now();
+    const windowMs = this.WINDOW_SIZE_IN_MINUTES * 60 * 1000;
+    for (const [key, info] of this.requestMap) {
+      if (now - info.firstRequestTime > windowMs) {
+        this.requestMap.delete(key);
+      }
+    }
+  }
 
   use(req: Request, res: Response, next: NextFunction) {
+    this.cleanExpired();
+
     const ip = req.ip;
     const now = Date.now();
-    const windowSize = this.WINDOW_SIZE_IN_MINUTES * 60 * 1000; // Chuyển đổi phút sang milliseconds
+    const windowSize = this.WINDOW_SIZE_IN_MINUTES * 60 * 1000;
 
-    // Lấy thông tin rate limit của IP hiện tại
     const rateLimitInfo = this.requestMap.get(ip);
 
     if (!rateLimitInfo) {

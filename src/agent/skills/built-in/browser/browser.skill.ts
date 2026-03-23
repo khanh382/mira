@@ -255,10 +255,54 @@ export class BrowserSkill implements ISkillRunner {
     { mtimeMs: number; entry: BrowserDomPresetDomainEntry }
   >();
 
+  /**
+   * Mutex: BrowserSkill là NestJS singleton, nên page/context là shared state.
+   * Serialise tất cả browser ops để tránh 2 task tranh nhau cùng 1 page.
+   */
+  private browserBusy = false;
+  private readonly browserQueue: Array<() => void> = [];
+
   constructor(
     private readonly usersService: UsersService,
     private readonly workspaceService: WorkspaceService,
   ) {}
+
+  /**
+   * Chờ lấy browser lock. Trả về true nếu thành công, false nếu timeout.
+   * maxWaitMs mặc định 90s (đủ cho 1 browser op điển hình hoàn thành).
+   */
+  private async acquireBrowserLock(maxWaitMs = 90_000): Promise<boolean> {
+    if (!this.browserBusy) {
+      this.browserBusy = true;
+      return true;
+    }
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const idx = this.browserQueue.indexOf(notify);
+        if (idx !== -1) this.browserQueue.splice(idx, 1);
+        resolve(false);
+      }, maxWaitMs);
+      const notify = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(true);
+      };
+      this.browserQueue.push(notify);
+    });
+  }
+
+  private releaseBrowserLock(): void {
+    const next = this.browserQueue.shift();
+    if (next) {
+      next();
+    } else {
+      this.browserBusy = false;
+    }
+  }
 
   get definition(): ISkillDefinition {
     return {
@@ -1675,15 +1719,37 @@ export class BrowserSkill implements ISkillRunner {
       return Math.min(120_000, Math.max(1000, Math.floor(n)));
     })();
 
+    // status: read-only, không cần lock
+    if (String(action) === 'status') {
+      return {
+        success: true,
+        data: {
+          browserActive: !!this.browser,
+          currentUrl: this.page ? await this.page.url() : null,
+        },
+        metadata: { durationMs: Date.now() - start },
+      };
+    }
+
+    // Serialize tất cả browser ops — tránh 2 task tranh cùng 1 page/context
+    const lockAcquired = await this.acquireBrowserLock();
+    if (!lockAcquired) {
+      return {
+        success: false,
+        error:
+          'Browser đang bận (chờ lock 90s vẫn chưa được). ' +
+          'Tác vụ browser khác đang chạy — hãy thử lại sau vài giây.',
+        metadata: { durationMs: Date.now() - start },
+      };
+    }
+
     try {
       switch (action) {
         case 'status':
+          // Đã xử lý ở trên, không bao giờ tới đây
           return {
             success: true,
-            data: {
-              browserActive: !!this.browser,
-              currentUrl: this.page ? await this.page.url() : null,
-            },
+            data: { browserActive: !!this.browser, currentUrl: null },
             metadata: { durationMs: Date.now() - start },
           };
 
@@ -2584,6 +2650,8 @@ export class BrowserSkill implements ISkillRunner {
         error: error.message,
         metadata: { durationMs: Date.now() - start },
       };
+    } finally {
+      this.releaseBrowserLock();
     }
   }
 

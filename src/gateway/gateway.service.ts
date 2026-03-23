@@ -48,6 +48,30 @@ export class GatewayService {
   /** Đếm lượt assistant reply per thread — trigger preference extraction mỗi N lượt. */
   private readonly prefExtractTurnCount = new Map<string, number>();
 
+  /**
+   * Đếm số pipeline đang chạy đồng thời per-user (userId → count).
+   * Ngăn 1 user spam nhiều request song song, gây nghẽn LLM API và DB.
+   * Giới hạn: owner=3, colleague=2, client=1 (có thể override qua ENV).
+   */
+  private readonly activeRunsPerUser = new Map<number, number>();
+
+  private getMaxConcurrentRuns(level: UserLevel): number {
+    switch (level) {
+      case UserLevel.OWNER:
+        return Number(
+          this.configService.get('MAX_CONCURRENT_RUNS_OWNER', '3'),
+        );
+      case UserLevel.COLLEAGUE:
+        return Number(
+          this.configService.get('MAX_CONCURRENT_RUNS_COLLEAGUE', '2'),
+        );
+      default:
+        return Number(
+          this.configService.get('MAX_CONCURRENT_RUNS_CLIENT', '1'),
+        );
+    }
+  }
+
   private isDuplicateInbound(key: string, ttlMs: number): boolean {
     const now = Date.now();
     const prev = this.recentInboundKeys.get(key);
@@ -1149,14 +1173,41 @@ export class GatewayService {
       options?.model ||
       this.configService.get('DEFAULT_MODEL', 'openai/gpt-4o');
 
-    const pipelineResult: IPipelineContext =
-      await this.agentService.handleMessage(inboundMessage, {
+    // ─── Per-user concurrency guard ─────────────────────────────────────
+    const maxRuns = this.getMaxConcurrentRuns(user.level);
+    const currentRuns = this.activeRunsPerUser.get(user.uid) ?? 0;
+    if (currentRuns >= maxRuns) {
+      const busyMsg =
+        `Hệ thống đang xử lý ${currentRuns} tác vụ cho bạn. ` +
+        `Vui lòng đợi tác vụ hiện tại hoàn thành rồi gửi lại (tối đa ${maxRuns} tác vụ song song).`;
+      await this.persistAssistantReply(user, thread.id, busyMsg, 0);
+      return {
+        response: busyMsg,
+        threadId: thread.id,
+        tokensUsed: 0,
+        runId: `busy-${user.uid}-${Date.now()}`,
+      };
+    }
+    this.activeRunsPerUser.set(user.uid, currentRuns + 1);
+    // ────────────────────────────────────────────────────────────────────
+
+    let pipelineResult: IPipelineContext;
+    try {
+      pipelineResult = await this.agentService.handleMessage(inboundMessage, {
         userId: user.uid,
         threadId: thread.id,
         actorTelegramId: options?.telegramUserId,
         model,
         skills: toolHints.length ? toolHints : undefined,
       });
+    } finally {
+      const after = (this.activeRunsPerUser.get(user.uid) ?? 1) - 1;
+      if (after <= 0) {
+        this.activeRunsPerUser.delete(user.uid);
+      } else {
+        this.activeRunsPerUser.set(user.uid, after);
+      }
+    }
 
     const responseContent = pipelineResult.agentResponse || '';
     if (responseContent) {
