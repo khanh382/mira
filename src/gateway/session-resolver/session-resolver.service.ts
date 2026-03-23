@@ -51,9 +51,6 @@ export class ThreadResolverService {
     const ownerZaloId = normalize((user as any).zaloId);
     const ownerDiscordId = normalize((user as any).discordId);
 
-    // Owner continuity:
-    // - prefer legacy owner session key = NULL
-    // - fallback to owner telegramId key (in case older rows were created that way)
     const isOwnerActor =
       (platform === ChatPlatform.TELEGRAM && actorTelegramId && ownerTelegramId
         ? actorTelegramId === ownerTelegramId
@@ -65,18 +62,22 @@ export class ThreadResolverService {
         ? actorDiscordId === ownerDiscordId
         : false);
 
+    // Try the exact platform-id match first, then fall back to legacy NULL key.
+    // Previous order [null, id] caused cross-talk: TypeORM could silently drop
+    // the null condition from the WHERE clause, returning the most-recently-
+    // updated thread regardless of the platform-id column.
     const ownerKeyCandidates =
       platform === ChatPlatform.TELEGRAM
         ? isOwnerActor
-          ? [null, actorTelegramId]
+          ? [actorTelegramId, null]
           : [actorTelegramId]
         : platform === ChatPlatform.ZALO
           ? isOwnerActor
-            ? [null, actorZaloId]
+            ? [actorZaloId, null]
             : [actorZaloId]
           : platform === ChatPlatform.DISCORD
             ? isOwnerActor
-              ? [null, actorDiscordId]
+              ? [actorDiscordId, null]
               : [actorDiscordId]
             : [undefined];
 
@@ -199,15 +200,15 @@ export class ThreadResolverService {
     const ownerKeyCandidates =
       platform === ChatPlatform.TELEGRAM
         ? isOwnerActor
-          ? [null, actorTelegramId]
+          ? [actorTelegramId, null]
           : [actorTelegramId]
         : platform === ChatPlatform.ZALO
           ? isOwnerActor
-            ? [null, actorZaloId]
+            ? [actorZaloId, null]
             : [actorZaloId]
           : platform === ChatPlatform.DISCORD
             ? isOwnerActor
-              ? [null, actorDiscordId]
+              ? [actorDiscordId, null]
               : [actorDiscordId]
             : [undefined];
 

@@ -101,7 +101,19 @@ export class DiscordWebhookController {
       this.logger.warn(
         `Access denied for discord user ${discordUserId} on bot ${botUser?.id}`,
       );
-      return res.json({ ok: true, denied: true });
+      const invite =
+        await this.botAccessService.getOrCreatePendingInviteByBotToken(
+          botToken,
+          BotPlatform.DISCORD,
+          discordUserId,
+        );
+      const deniedText = invite?.code
+        ? `⛔️ Bạn chưa được cấp quyền dùng bot này. Mã xác thực của bạn là ${invite.code} (hết hạn sau 24 giờ). Hãy gửi mã này cho owner để owner duyệt kích hoạt bot nhé`
+        : '⛔️ Bạn chưa được cấp quyền dùng bot này. Hãy nhắn mã xác thực 6 ký tự do owner cấp.';
+      return res.json({
+        type: 4,
+        data: { content: deniedText },
+      });
     }
 
     const interactionId = interaction?.id;

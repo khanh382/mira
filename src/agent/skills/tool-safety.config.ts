@@ -5,6 +5,7 @@
 export const COLLEAGUE_SAFE_TOOL_CODES = new Set<string>([
   'web_fetch',
   'web_search',
+  'http_request',
   'memory_search',
   'memory_get',
   'threads_list',

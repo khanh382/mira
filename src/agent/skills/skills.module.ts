@@ -7,6 +7,7 @@ import { ClawhubModule } from './clawhub/clawhub.module';
 
 import { WebSearchSkill } from './built-in/web/web-search.skill';
 import { WebFetchSkill } from './built-in/web/web-fetch.skill';
+import { HttpRequestSkill } from './built-in/web/http-request.skill';
 import { ExecSkill } from './built-in/runtime/exec.skill';
 import { CronManageSkill } from './built-in/runtime/cron-manage.skill';
 import { SkillsRegistryManageSkill } from './built-in/runtime/skills-registry-manage.skill';
@@ -33,6 +34,7 @@ import { LearningModule } from '../learning/learning.module';
 import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { BotUsersModule } from '../../modules/bot-users/bot-users.module';
+import { HttpTokensModule } from '../../modules/http-tokens/http-tokens.module';
 
 @Module({
   imports: [
@@ -46,12 +48,14 @@ import { BotUsersModule } from '../../modules/bot-users/bot-users.module';
     WorkspaceModule,
     ChannelsModule,
     BotUsersModule,
+    HttpTokensModule,
     forwardRef(() => SchedulerModule),
   ],
   providers: [
     SkillsService,
     WebSearchSkill,
     WebFetchSkill,
+    HttpRequestSkill,
     ExecSkill,
     CronManageSkill,
     SkillsRegistryManageSkill,

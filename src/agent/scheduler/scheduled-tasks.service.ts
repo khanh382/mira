@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { SchedulerRegistry } from '@nestjs/schedule';
+import { Interval, SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import {
   ScheduledTask,
@@ -41,6 +41,7 @@ export interface CreateTaskOptions {
 export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ScheduledTasksService.name);
   private readonly runningTasks = new Map<string, boolean>();
+  private readonly scheduledSnapshots = new Map<string, string>();
 
   constructor(
     @InjectRepository(ScheduledTask)
@@ -200,7 +201,7 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
       });
 
       for (const task of tasks) {
-        this.scheduleTask(task);
+        this.scheduleTask(task, true);
       }
 
       this.logger.log(`Loaded ${tasks.length} active scheduled tasks`);
@@ -209,14 +210,51 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private scheduleTask(task: ScheduledTask): void {
+  /**
+   * Đồng bộ runtime scheduler từ DB để hỗ trợ trường hợp người dùng sửa trực tiếp DB
+   * (insert/update/pause/remove task) mà không cần restart server.
+   */
+  @Interval(30_000)
+  private async refreshFromDatabase(): Promise<void> {
+    try {
+      const activeTasks = await this.taskRepo.find({
+        where: { status: TaskStatus.ACTIVE },
+      });
+      const activeByCode = new Map(activeTasks.map((t) => [t.code, t]));
+
+      // Unschedule task không còn active trong DB.
+      for (const code of [...this.scheduledSnapshots.keys()]) {
+        if (!activeByCode.has(code)) {
+          this.unscheduleTask(code);
+          this.scheduledSnapshots.delete(code);
+        }
+      }
+
+      // Add/update task active.
+      for (const task of activeTasks) {
+        const snapshot = this.buildSnapshot(task);
+        const prev = this.scheduledSnapshots.get(task.code);
+        const shouldReschedule = prev !== snapshot;
+        this.scheduleTask(task, shouldReschedule);
+      }
+    } catch (error) {
+      this.logger.warn(`Scheduled task refresh failed: ${error.message}`);
+    }
+  }
+
+  private scheduleTask(task: ScheduledTask, force = false): void {
     const jobName = `scheduled_${task.code}`;
 
-    try {
-      this.schedulerRegistry.getCronJob(jobName);
-      return;
-    } catch {
-      // Job doesn't exist yet — good, create it
+    if (force) {
+      this.unscheduleTask(task.code);
+    } else {
+      try {
+        this.schedulerRegistry.getCronJob(jobName);
+        this.scheduledSnapshots.set(task.code, this.buildSnapshot(task));
+        return;
+      } catch {
+        // Job doesn't exist yet — good, create it
+      }
     }
 
     const job = new CronJob(
@@ -229,6 +267,7 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
 
     this.schedulerRegistry.addCronJob(jobName, job);
     job.start();
+    this.scheduledSnapshots.set(task.code, this.buildSnapshot(task));
 
     this.logger.debug(
       `Scheduled: ${task.code} → "${task.cronExpression}" (next: ${job.nextDate()?.toISO()})`,
@@ -242,6 +281,7 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
     } catch {
       // Job doesn't exist — ignore
     }
+    this.scheduledSnapshots.delete(code);
   }
 
   private stopAll(): void {
@@ -251,6 +291,11 @@ export class ScheduledTasksService implements OnModuleInit, OnModuleDestroy {
         job.stop();
       }
     });
+    this.scheduledSnapshots.clear();
+  }
+
+  private buildSnapshot(task: ScheduledTask): string {
+    return [task.status, task.cronExpression, task.agentPrompt].join('::');
   }
 
   // ─── Task Execution (quy tắc chung: owner thiết lập trong config) ───

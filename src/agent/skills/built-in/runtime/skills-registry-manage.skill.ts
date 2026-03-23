@@ -1762,6 +1762,8 @@ export class SkillsRegistryManageSkill implements ISkillRunner {
       }
     }
 
+    runtimeParams = this.applyModePresetToRuntimeParams(parsed, runtimeParams);
+
     const persistArtifactsOnFailure =
       runtimeParams.persistArtifactsOnFailure !== false &&
       runtimeParams.persistArtifactsOnFailure !== 'false';
@@ -1789,38 +1791,101 @@ export class SkillsRegistryManageSkill implements ISkillRunner {
         const rawParams =
           step && typeof step === 'object' ? { ...step } : ({} as any);
         const optional = rawParams.optional === true;
+        const stepToolCode = String(rawParams.tool ?? '').trim().toLowerCase();
+        const whenAnyParams = Array.isArray(rawParams.whenAnyParams)
+          ? (rawParams.whenAnyParams as unknown[])
+              .map((x) => String(x ?? '').trim())
+              .filter(Boolean)
+          : [];
+        const stepCapture =
+          rawParams.capture && typeof rawParams.capture === 'object'
+            ? ({ ...rawParams.capture } as Record<string, unknown>)
+            : null;
         delete rawParams.action;
         delete rawParams.optional;
-        const resolvedParams: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(rawParams)) {
-          if (typeof v === 'string') {
-            resolvedParams[k] = v.replace(/\$([a-zA-Z0-9_]+)/g, (_m, key) => {
-              const rv = runtimeParams[key];
-              return rv == null ? '' : String(rv);
+        delete rawParams.tool;
+        delete rawParams.whenAnyParams;
+        delete rawParams.capture;
+        if (whenAnyParams.length > 0) {
+          const hasAny = whenAnyParams.some((k) => {
+            const v = runtimeParams[k];
+            if (v == null) return false;
+            if (typeof v === 'string') return v.trim().length > 0;
+            if (Array.isArray(v)) return v.length > 0;
+            return true;
+          });
+          if (!hasAny) {
+            runLogs.push({
+              tool: stepToolCode || 'browser',
+              action: String(step?.action ?? '').trim() || undefined,
+              optional: true,
+              success: true,
+              skipped: true,
+              reason: `whenAnyParams not satisfied: ${whenAnyParams.join(',')}`,
             });
-          } else {
-            resolvedParams[k] = v as unknown;
+            continue;
           }
         }
+        const resolvedParams =
+          this.resolveTemplateValue(rawParams, runtimeParams) as Record<
+            string,
+            unknown
+          >;
         const browserAction = String(step?.action ?? '').trim();
-        if (!browserAction) continue;
-        const result = await this.skillsService.executeSkill('browser', {
+        const skillCode = stepToolCode || (browserAction ? 'browser' : '');
+        if (!skillCode) continue;
+        if (skillCode === 'browser' && !browserAction) {
+          runLogs.push({
+            tool: 'browser',
+            optional,
+            success: false,
+            error: 'Missing browser action',
+          });
+          if (!optional) {
+            runOutcome = {
+              success: false,
+              error: 'Missing browser action in step',
+              steps: runLogs,
+            };
+            break;
+          }
+          continue;
+        }
+
+        const executeParams =
+          skillCode === 'browser'
+            ? {
+                action: browserAction,
+                ...resolvedParams,
+                ...(debugRun ? { saveOnError: true } : {}),
+                // Production skill runs: snapshots/HTML in OS temp only, no BRAIN_DIR skill_draft.
+                browserDebugScope: 'temp',
+              }
+            : resolvedParams;
+
+        const result = await this.skillsService.executeSkill(skillCode, {
           userId: context.userId,
           threadId: context.threadId,
           runId: context.runId,
           actorTelegramId: context.actorTelegramId,
-          parameters: {
-            action: browserAction,
-            ...resolvedParams,
-            ...(debugRun ? { saveOnError: true } : {}),
-            // Production skill runs: snapshots/HTML in OS temp only, no BRAIN_DIR skill_draft.
-            browserDebugScope: 'temp',
-          },
+          parameters: executeParams,
         });
         const data = (result as any)?.data;
         const art = data?.debugArtifacts;
+        if ((result as any)?.success && stepCapture) {
+          for (const [varName, fromPath] of Object.entries(stepCapture)) {
+            if (!varName) continue;
+            const p = String(fromPath ?? '').trim();
+            if (!p) continue;
+            const val = this.getByPath({ data, result }, p);
+            if (val !== undefined) {
+              runtimeParams[varName] = val;
+            }
+          }
+        }
         runLogs.push({
-          action: browserAction,
+          tool: skillCode,
+          action: browserAction || undefined,
           optional,
           success: Boolean((result as any)?.success),
           error: (result as any)?.error,
@@ -1860,7 +1925,9 @@ export class SkillsRegistryManageSkill implements ISkillRunner {
           }
           runOutcome = {
             success: false,
-            error: (result as any)?.error ?? `Step failed: ${browserAction}`,
+            error:
+              (result as any)?.error ??
+              `Step failed: ${skillCode}${browserAction ? `/${browserAction}` : ''}`,
             steps: runLogs,
           };
           break;
@@ -1911,6 +1978,84 @@ export class SkillsRegistryManageSkill implements ISkillRunner {
   private fileUrlToPath(fileUrl: string): string {
     const s = String(fileUrl ?? '').trim();
     return s.startsWith('file://') ? s.replace(/^file:\/\//, '') : s;
+  }
+
+  private getByPath(input: unknown, pathExpr: string): unknown {
+    const parts = String(pathExpr ?? '')
+      .split('.')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    let cur: any = input;
+    for (const p of parts) {
+      if (cur == null) return undefined;
+      cur = cur[p];
+    }
+    return cur;
+  }
+
+  private resolveTemplateValue(
+    value: unknown,
+    runtimeParams: Record<string, unknown>,
+  ): unknown {
+    if (typeof value === 'string') {
+      const exact = value.match(/^\$([a-zA-Z0-9_]+)$/);
+      if (exact) return runtimeParams[exact[1]];
+      return value.replace(/\$([a-zA-Z0-9_]+)/g, (_m, key) => {
+        const rv = runtimeParams[key];
+        return rv == null ? '' : String(rv);
+      });
+    }
+    if (Array.isArray(value)) {
+      return value.map((v) => this.resolveTemplateValue(v, runtimeParams));
+    }
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        out[k] = this.resolveTemplateValue(v, runtimeParams);
+      }
+      return out;
+    }
+    return value;
+  }
+
+  private applyModePresetToRuntimeParams(
+    parsedSkillFile: any,
+    runtimeParams: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const mode = String(runtimeParams.mode ?? '').trim();
+    if (!mode) return runtimeParams;
+    const presets =
+      parsedSkillFile?.modePresets && typeof parsedSkillFile.modePresets === 'object'
+        ? (parsedSkillFile.modePresets as Record<string, unknown>)
+        : null;
+    if (!presets) return runtimeParams;
+    const presetRaw = presets[mode];
+    if (!presetRaw || typeof presetRaw !== 'object' || Array.isArray(presetRaw)) {
+      return runtimeParams;
+    }
+    const preset = presetRaw as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...runtimeParams };
+    for (const [k, v] of Object.entries(preset)) {
+      const existing = merged[k];
+      if (existing === undefined || existing === null || existing === '') {
+        merged[k] = v;
+        continue;
+      }
+      if (
+        existing &&
+        typeof existing === 'object' &&
+        !Array.isArray(existing) &&
+        v &&
+        typeof v === 'object' &&
+        !Array.isArray(v)
+      ) {
+        merged[k] = this.deepMergeSkillJson(
+          v as Record<string, unknown>,
+          existing as Record<string, unknown>,
+        );
+      }
+    }
+    return merged;
   }
 
   /** Merge patch vào skill.json: object lồng nhau merge đệ quy; array / scalar từ patch thay thế. */

@@ -95,6 +95,25 @@ export class ZaloWebhookController {
       this.logger.warn(
         `Access denied for zalo user ${senderId} on bot ${botUser?.id}`,
       );
+      const invite =
+        await this.botAccessService.getOrCreatePendingInviteByBotToken(
+          botToken,
+          BotPlatform.ZALO,
+          senderId,
+        );
+      if (invite?.code) {
+        await this.deliveryService.sendZalo(
+          botToken,
+          senderId,
+          `⛔️ Bạn chưa được cấp quyền dùng bot này. Mã xác thực của bạn là ${invite.code} (hết hạn sau 24 giờ). Hãy gửi mã này cho owner để owner duyệt kích hoạt bot nhé`,
+        );
+      } else {
+        await this.deliveryService.sendZalo(
+          botToken,
+          senderId,
+          '⛔️ Bạn chưa được cấp quyền dùng bot này. Hãy nhắn mã xác thực 6 ký tự do owner cấp.',
+        );
+      }
       return { ok: true, denied: true };
     }
 

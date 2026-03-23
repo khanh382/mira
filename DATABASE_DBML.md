@@ -156,6 +156,21 @@ Table skills_registry {
   updated_at timestamp
 }
 
+// Token xác thực HTTP theo domain cho các skill REST (ví dụ wordpress_content_api/http_request).
+// Một domain chỉ có 1 bản ghi active (unique domain), auth_type quyết định cách gắn header.
+Table http_tokens {
+  id integer [pk, increment]
+  domain varchar [unique]
+  auth_type enum('api_key', 'bearer', 'basic') [default: 'bearer']
+  header_name varchar [null]
+  token text
+  username varchar [null]
+  note text [null]
+  created_by_uid integer [ref: > users.uid, null]
+  created_at timestamp
+  updated_at timestamp
+}
+
 // Tác vụ theo lịch (cron) gắn user: prompt agent, skill cho phép, thống kê chạy.
 Table scheduled_tasks {
   task_id integer [pk, increment]
@@ -292,6 +307,11 @@ Table openclaw_messages {
 
 - Bảng `config` là global singleton (thực tế thường chỉ một dòng).
 - `skills_registry.min_model_tier` map theo enum: `cheap | skill | processor | expert`.
+- `http_tokens` được dùng bởi skill `http_request` để tự động gắn auth theo domain:
+  - `api_key` -> header tùy biến `header_name: token`
+  - `bearer` -> `Authorization: Bearer <token>`
+  - `basic` -> `Authorization: Basic base64(username:token)`
+- Với `wordpress_content_api`, domain lấy từ `baseUrl` (hoặc `authDomain`) để tra `http_tokens`.
 - `scheduled_tasks.max_model_tier` trong entity là `varchar` (chưa enum cứng).
 - `users.update_at` và `bot_users.update_at` (không phải `updated_at`) đúng tên cột TypeORM; `chat_threads` / `chat_messages` dùng `updated_at`.
 - `chat_threads` / `chat_messages`: cột `telegram_id`, `zalo_id`, `discord_id` theo kênh (nullable).

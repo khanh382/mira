@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { ChatThread, ChatPlatform } from './entities/chat-thread.entity';
 
@@ -29,12 +29,20 @@ export class ThreadsService {
     actor?: { telegramId?: string; zaloId?: string; discordId?: string },
   ): Promise<ChatThread | null> {
     const where: any = { userId, platform, isActive: true };
+
+    // Use TypeORM's IsNull() operator for null values — plain `null` can be
+    // silently dropped from the WHERE clause by some TypeORM versions, causing
+    // the query to return the most-recently-updated thread regardless of the
+    // platform-id column.
     if (platform === ChatPlatform.TELEGRAM) {
-      where.telegramId = actor?.telegramId ?? null;
+      const v = actor?.telegramId ?? null;
+      where.telegramId = v === null ? IsNull() : v;
     } else if (platform === ChatPlatform.ZALO) {
-      where.zaloId = actor?.zaloId ?? null;
+      const v = actor?.zaloId ?? null;
+      where.zaloId = v === null ? IsNull() : v;
     } else if (platform === ChatPlatform.DISCORD) {
-      where.discordId = actor?.discordId ?? null;
+      const v = actor?.discordId ?? null;
+      where.discordId = v === null ? IsNull() : v;
     }
 
     return this.threadRepo.findOne({
@@ -109,29 +117,27 @@ export class ThreadsService {
     platform: ChatPlatform,
     actor: { telegramId?: string | null; zaloId?: string | null; discordId?: string | null },
   ): Promise<void> {
-    // Important: for UPDATE queries, TypeORM doesn't always expose the alias in SQL.
-    // The previous implementation used `t.<col>` which caused:
-    // "missing FROM-clause entry for table \"t\"".
-    // Here we avoid alias prefixes for update statements.
+    // Use actual DB column names in raw QueryBuilder WHERE strings —
+    // TypeORM does NOT map entity property names in raw .where() fragments.
     const qb = this.threadRepo
       .createQueryBuilder()
       .update(ChatThread)
       .set({ isActive: false })
-      .where('userId = :userId', { userId })
-      .andWhere('platform = :platform', { platform })
-      .andWhere('isActive = true');
+      .where('"uid" = :userId', { userId })
+      .andWhere('"platform" = :platform', { platform })
+      .andWhere('"is_active" = true');
 
     if (platform === ChatPlatform.TELEGRAM) {
       if (actor.telegramId === null)
-        qb.andWhere('telegramId IS NULL');
+        qb.andWhere('"telegram_id" IS NULL');
       else
-        qb.andWhere('telegramId = :telegramId', { telegramId: actor.telegramId });
+        qb.andWhere('"telegram_id" = :telegramId', { telegramId: actor.telegramId });
     } else if (platform === ChatPlatform.ZALO) {
-      if (actor.zaloId === null) qb.andWhere('zaloId IS NULL');
-      else qb.andWhere('zaloId = :zaloId', { zaloId: actor.zaloId });
+      if (actor.zaloId === null) qb.andWhere('"zalo_id" IS NULL');
+      else qb.andWhere('"zalo_id" = :zaloId', { zaloId: actor.zaloId });
     } else if (platform === ChatPlatform.DISCORD) {
-      if (actor.discordId === null) qb.andWhere('discordId IS NULL');
-      else qb.andWhere('discordId = :discordId', { discordId: actor.discordId });
+      if (actor.discordId === null) qb.andWhere('"discord_id" IS NULL');
+      else qb.andWhere('"discord_id" = :discordId', { discordId: actor.discordId });
     }
 
     const res = await qb.execute();

@@ -24,6 +24,7 @@ import { UsersService } from '../users/users.service';
 @Injectable()
 export class BotAccessService {
   private readonly logger = new Logger(BotAccessService.name);
+  private readonly inviteTtlMs = 24 * 60 * 60 * 1000;
 
   private readonly platformToUserField: Record<BotPlatform, string> = {
     [BotPlatform.TELEGRAM]: 'telegramId',
@@ -123,7 +124,7 @@ export class BotAccessService {
       throw new Error('Bot not configured for this user');
     }
 
-    const code = randomBytes(3).toString('hex').toUpperCase();
+    const code = this.generateVerificationCode();
 
     const grant = this.grantRepo.create({
       botUserId: botUser.id,
@@ -155,22 +156,58 @@ export class BotAccessService {
     const botUser = await this.findBotByToken(botToken, platform);
     if (!botUser) return null;
 
-    const pending = await this.grantRepo
+    const latest = await this.grantRepo
       .createQueryBuilder('g')
       .where('g.bu_id = :botUserId', { botUserId: botUser.id })
       .andWhere('g.platform = :platform', { platform })
       .andWhere('g.platform_user_id = :platformUserId', { platformUserId })
-      .andWhere('g.is_verified = false')
-      .andWhere('g.verification_code IS NOT NULL')
-      .andWhere("g.created_at >= (NOW() - INTERVAL '24 hours')")
       .orderBy('g.created_at', 'DESC')
       .getOne();
 
-    if (pending?.verificationCode) {
-      return { code: pending.verificationCode, grantId: pending.id };
+    if (latest) {
+      if (latest.isVerified) {
+        // Đã verify thì không cần cấp mã mới.
+        return null;
+      }
+
+      const now = Date.now();
+      const createdAtMs = latest.createdAt?.getTime?.() ?? 0;
+      const stillValid =
+        !!latest.verificationCode &&
+        createdAtMs > 0 &&
+        now - createdAtMs <= this.inviteTtlMs;
+
+      if (stillValid) {
+        return { code: latest.verificationCode!, grantId: latest.id };
+      }
+
+      // Tái sử dụng cùng bản ghi để tránh phình số row:
+      // - code null, hoặc
+      // - code hết hạn nhưng chưa verify.
+      const nextCode = this.generateVerificationCode();
+      await this.grantRepo
+        .createQueryBuilder()
+        .update(BotAccessGrant)
+        .set({
+          verificationCode: nextCode,
+          isVerified: false,
+          // reset timestamp phát hành mã
+          createdAt: () => 'NOW()' as any,
+        } as any)
+        .where('grant_id = :id', { id: latest.id })
+        .execute();
+
+      this.logger.debug(
+        `Access invite refreshed: grant ${latest.id}, platform ${platform}, target ${platformUserId}, code ${nextCode}`,
+      );
+      return { code: nextCode, grantId: latest.id };
     }
 
     return this.createInvite(botUser.userId, platform, platformUserId);
+  }
+
+  private generateVerificationCode(): string {
+    return randomBytes(3).toString('hex').toUpperCase();
   }
 
   /**
