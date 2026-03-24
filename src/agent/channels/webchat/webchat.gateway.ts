@@ -14,6 +14,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
 import { sanitizeAssistantOutboundPlainText } from '../../../modules/bot-users/assistant-outbound-plain-text';
+import { ChatPlatform } from '../../../modules/chat/entities/chat-thread.entity';
 
 /** CORS cho handshake Socket.IO — trùng logic với `isOriginAllowed` (chống CSWSH). */
 function resolveWebchatCorsOrigins(): string[] {
@@ -130,6 +131,8 @@ export class WebChatGateway
     payload: {
       content: string;
       model?: string;
+      /** Phiên chat WEB (UUID) — phải là thread platform=web, không dùng được thread Telegram/Zalo/Discord */
+      threadId?: string;
       /** URL công khai tới ảnh/file (nếu có) */
       mediaUrl?: string;
       /** Đường dẫn file trên server mà backend đã lưu sẵn (nâng cao) */
@@ -155,7 +158,12 @@ export class WebChatGateway
         payload.content,
         {
           channelId: 'webchat',
+          platform: ChatPlatform.WEB,
           model: payload.model,
+          threadId: payload.threadId,
+          onOpenclawDelta: (delta: string) => {
+            client.emit('message:delta', { delta });
+          },
           mediaUrl: payload.mediaUrl,
           mediaPath: payload.mediaPath,
           mediaPaths: payload.mediaPaths,
@@ -168,6 +176,10 @@ export class WebChatGateway
           : result.response,
         threadId: result.threadId,
         tokensUsed: result.tokensUsed,
+        runId: result.runId,
+      });
+      client.emit('message:done', {
+        threadId: result.threadId,
         runId: result.runId,
       });
 

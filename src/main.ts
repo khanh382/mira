@@ -3,10 +3,18 @@ import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
 import * as cookieParser from 'cookie-parser';
 import { DatabaseExceptionFilter } from './exceptions/database-exception.filter';
+import { HttpExceptionFilter } from './exceptions/http-exception.filter';
+import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.useGlobalFilters(new DatabaseExceptionFilter());
+
+  // Thứ tự filter: HttpException trước (xử lý lỗi HTTP chuẩn),
+  // DatabaseExceptionFilter sau (xử lý lỗi TypeORM cụ thể).
+  app.useGlobalFilters(new HttpExceptionFilter(), new DatabaseExceptionFilter());
+
+  // Bọc mọi response thành công thành { statusCode, message, data }.
+  app.useGlobalInterceptors(new ResponseInterceptor());
 
   const configService = app.get(ConfigService);
 

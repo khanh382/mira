@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { WorkflowRun, WorkflowRunStatus } from './entities/workflow-run.entity';
@@ -12,6 +13,7 @@ export class TaskWorkflowExecutorService {
   private readonly logger = new Logger(TaskWorkflowExecutorService.name);
 
   constructor(
+    private readonly config: ConfigService,
     @InjectRepository(WorkflowRun)
     private readonly runRepo: Repository<WorkflowRun>,
     @InjectRepository(WorkflowRunTask)
@@ -152,11 +154,15 @@ export class TaskWorkflowExecutorService {
     });
   }
 
-  /** Poll task run DB cho đến khi xong hoặc timeout (10 phút). */
+  /**
+   * Poll task run DB cho đến khi xong hoặc timeout (10 phút).
+   * Khoảng chờ giữa các lần đọc: WORKFLOW_TASK_POLL_MS (mặc định 2000).
+   */
   private async waitForTaskRun(
     taskRunId: string,
     maxMs = 600_000,
   ): Promise<TaskRunStatus> {
+    const pollMs = this.getTaskPollIntervalMs();
     const deadline = Date.now() + maxMs;
     while (Date.now() < deadline) {
       const row = await this.taskRunRepo.findOne({
@@ -171,9 +177,16 @@ export class TaskWorkflowExecutorService {
       ) {
         return row.status;
       }
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, pollMs));
     }
     return TaskRunStatus.FAILED;
+  }
+
+  /** 500ms–60s; mặc định 2s — cân bằng tải DB vs độ trễ chuyển task tiếp theo. */
+  private getTaskPollIntervalMs(): number {
+    const raw = Number(this.config.get<string>('WORKFLOW_TASK_POLL_MS', '2000'));
+    if (!Number.isFinite(raw)) return 2000;
+    return Math.min(60_000, Math.max(500, Math.floor(raw)));
   }
 
   private async markRunFailed(wfrId: string, error: string): Promise<void> {

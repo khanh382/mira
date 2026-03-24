@@ -11,12 +11,14 @@ import { TaskWorkflowExecutorService } from './task-workflow-executor.service';
 import { TaskWorkflowQueueService } from './task-workflow-queue.service';
 import { TaskWorkflowsController } from './task-workflows.controller';
 import { TaskRun } from '../tasks/entities/task-run.entity';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Workflow, WorkflowTask, WorkflowRun, WorkflowRunTask, TaskRun]),
     AuthJwtModule,
     forwardRef(() => TasksModule),
+    UsersModule,
   ],
   controllers: [TaskWorkflowsController],
   providers: [

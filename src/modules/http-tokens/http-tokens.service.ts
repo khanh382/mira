@@ -19,6 +19,24 @@ export interface UpsertHttpTokenInput {
   note?: string | null;
 }
 
+export interface CreateMyHttpTokenInput {
+  domain: string;
+  authType: HttpTokenAuthType;
+  headerName?: string | null;
+  token: string;
+  username?: string | null;
+  note?: string | null;
+}
+
+export interface UpdateMyHttpTokenInput {
+  domain?: string;
+  authType?: HttpTokenAuthType;
+  headerName?: string | null;
+  token?: string;
+  username?: string | null;
+  note?: string | null;
+}
+
 @Injectable()
 export class HttpTokensService {
   constructor(
@@ -90,6 +108,24 @@ export class HttpTokensService {
     };
   }
 
+  /**
+   * Public record cho user self-service: khong tra ve token/tokenMasked.
+   */
+  toPublicWebsiteRecord(row: HttpToken) {
+    return {
+      id: row.id,
+      domain: row.domain,
+      authType: row.authType,
+      headerName: row.headerName,
+      username: row.username,
+      note: row.note,
+      createdByUid: row.createdByUid,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      hasToken: !!row.token,
+    };
+  }
+
   async list(): Promise<HttpToken[]> {
     return this.tokenRepo.find({ order: { domain: 'ASC' } });
   }
@@ -130,6 +166,97 @@ export class HttpTokensService {
 
   async deleteById(id: number): Promise<void> {
     const item = await this.getById(id);
+    await this.tokenRepo.delete(item.id);
+  }
+
+  async listByUser(uid: number): Promise<HttpToken[]> {
+    return this.tokenRepo.find({
+      where: { createdByUid: uid },
+      order: { domain: 'ASC' },
+    });
+  }
+
+  async getByIdForUser(id: number, uid: number): Promise<HttpToken> {
+    const item = await this.tokenRepo.findOne({ where: { id, createdByUid: uid } });
+    if (!item) throw new NotFoundException('Website token not found');
+    return item;
+  }
+
+  async createForUser(input: CreateMyHttpTokenInput, uid: number): Promise<HttpToken> {
+    this.validateInput({
+      ...input,
+      token: String(input.token ?? ''),
+    });
+    const domain = this.normalizeDomain(input.domain);
+    const existing = await this.tokenRepo.findOne({ where: { domain } });
+    if (existing) {
+      if (existing.createdByUid === uid) {
+        throw new BadRequestException('Domain already exists in your websites');
+      }
+      throw new ForbiddenException('Domain already belongs to another user');
+    }
+    const row = this.tokenRepo.create({
+      domain,
+      authType: input.authType,
+      headerName: input.headerName ? String(input.headerName).trim() : null,
+      token: String(input.token).trim(),
+      username: input.username ? String(input.username).trim() : null,
+      note: input.note ? String(input.note).trim() : null,
+      createdByUid: uid,
+    });
+    return this.tokenRepo.save(row);
+  }
+
+  async updateForUser(
+    id: number,
+    uid: number,
+    input: UpdateMyHttpTokenInput,
+  ): Promise<HttpToken> {
+    const item = await this.getByIdForUser(id, uid);
+
+    if (input.domain !== undefined) {
+      const normalized = this.normalizeDomain(input.domain);
+      const existing = await this.tokenRepo.findOne({ where: { domain: normalized } });
+      if (existing && existing.id !== item.id) {
+        if (existing.createdByUid === uid) {
+          throw new BadRequestException('Domain already exists in your websites');
+        }
+        throw new ForbiddenException('Domain already belongs to another user');
+      }
+      item.domain = normalized;
+    }
+    if (input.authType !== undefined) item.authType = input.authType;
+    if (input.headerName !== undefined) {
+      item.headerName = input.headerName ? String(input.headerName).trim() : null;
+    }
+    if (input.username !== undefined) {
+      item.username = input.username ? String(input.username).trim() : null;
+    }
+    if (input.note !== undefined) {
+      item.note = input.note ? String(input.note).trim() : null;
+    }
+    if (input.token !== undefined) {
+      if (!String(input.token).trim()) {
+        throw new BadRequestException('token cannot be empty');
+      }
+      item.token = String(input.token).trim();
+    }
+
+    // Validate theo authType sau khi merge patch.
+    this.validateInput({
+      domain: item.domain,
+      authType: item.authType,
+      headerName: item.headerName,
+      token: item.token,
+      username: item.username,
+      note: item.note,
+    });
+
+    return this.tokenRepo.save(item);
+  }
+
+  async deleteByIdForUser(id: number, uid: number): Promise<void> {
+    const item = await this.getByIdForUser(id, uid);
     await this.tokenRepo.delete(item.id);
   }
 }

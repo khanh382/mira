@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -243,6 +243,95 @@ export class OpenclawChatService {
     };
   }
 
+  async handleUserTurnStream(params: {
+    user: User;
+    thread: ChatThread;
+    platform: ChatPlatform;
+    effectiveContent: string;
+    honorifics: { userTitle: string; botTitle: string };
+    onDelta: (delta: string) => void;
+  }): Promise<{ response: string; runId: string }> {
+    const oaId = params.thread.activeOpenclawAgentId;
+    if (!oaId) {
+      throw new Error('handleUserTurnStream called without active_openclaw_oa_id');
+    }
+
+    const agent = await this.agentsService.getAgentForOwner(oaId, params.user.uid);
+    const oct = await this.findOrCreateOpenclawThread({
+      chatThreadId: params.thread.id,
+      ownerUid: params.user.uid,
+      agent,
+      platform: params.platform,
+      telegramId: params.thread.telegramId ?? undefined,
+      zaloId: params.thread.zaloId ?? undefined,
+      discordId: params.thread.discordId ?? undefined,
+    });
+
+    const userMsg = this.ocmRepo.create({
+      id: uuidv4(),
+      threadId: oct.id,
+      ownerUserId: params.user.uid,
+      role: OpenclawMessageRole.USER,
+      content: params.effectiveContent,
+      agentDisplayName: null,
+      extra: null,
+    });
+    await this.ocmRepo.save(userMsg);
+
+    const wrapped = this.wrapWithHonorifics(
+      params.effectiveContent,
+      params.honorifics,
+    );
+
+    let reply: string;
+    let nextSession: string | null = oct.openclawSessionKey;
+    let relayOk = false;
+
+    try {
+      const out = await this.relay.sendChatStream({
+        agent,
+        message: wrapped,
+        sessionKey: oct.openclawSessionKey,
+        onDelta: params.onDelta,
+      });
+      reply = out.reply;
+      nextSession = out.sessionKey;
+      relayOk = true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`OpenClaw stream failed oa_id=${oaId}: ${msg}`);
+      reply = `❌ Không gửi được tới OpenClaw: ${msg}`;
+      params.onDelta(reply);
+    }
+
+    await this.octRepo.update(oct.id, {
+      openclawSessionKey: nextSession,
+      updatedAt: new Date(),
+    });
+
+    const asst = this.ocmRepo.create({
+      id: uuidv4(),
+      threadId: oct.id,
+      ownerUserId: params.user.uid,
+      role: OpenclawMessageRole.ASSISTANT,
+      content: reply,
+      agentDisplayName: agent.name,
+      extra: null,
+    });
+    await this.ocmRepo.save(asst);
+
+    if (relayOk) {
+      await this.agentsService.markRelaySuccess(agent.id);
+    } else {
+      await this.agentsService.markRelayFailure(agent.id, reply);
+    }
+
+    return {
+      response: `${agent.name}: ${reply}`,
+      runId: `openclaw-stream-${oaId}-${Date.now()}`,
+    };
+  }
+
   private wrapWithHonorifics(
     text: string,
     h: { userTitle: string; botTitle: string },
@@ -373,6 +462,166 @@ export class OpenclawChatService {
     }
 
     return { ok: relayOk, reply };
+  }
+
+  async listSessionsForOwner(params: {
+    ownerUid: number;
+    agentId?: number;
+    chatThreadId?: string;
+  }): Promise<
+    Array<{
+      id: string;
+      agentId: number;
+      chatThreadId: string | null;
+      openclawSessionKey: string | null;
+      platform: ChatPlatform;
+      title: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+      agent: { id: number; name: string };
+    }>
+  > {
+    const where: Record<string, unknown> = { ownerUserId: params.ownerUid };
+    if (params.agentId !== undefined) where['agentId'] = params.agentId;
+    if (params.chatThreadId !== undefined) where['chatThreadId'] = params.chatThreadId;
+
+    const rows = await this.octRepo.find({
+      where: where as any,
+      relations: ['agent'],
+      order: { updatedAt: 'DESC' },
+      take: 200,
+    });
+
+    return rows.map((r) => ({
+      id: r.id,
+      agentId: r.agentId,
+      chatThreadId: r.chatThreadId,
+      openclawSessionKey: r.openclawSessionKey,
+      platform: r.platform,
+      title: r.title,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      agent: { id: r.agent.id, name: r.agent.name },
+    }));
+  }
+
+  async getSessionDetailForOwner(params: {
+    ownerUid: number;
+    sessionId: string;
+    limit?: number;
+  }): Promise<{
+    session: OpenclawThread;
+    messages: OpenclawMessage[];
+  }> {
+    const session = await this.octRepo.findOne({
+      where: { id: params.sessionId, ownerUserId: params.ownerUid },
+      relations: ['agent'],
+    });
+    if (!session) throw new NotFoundException('OpenClaw session not found');
+
+    const lim = Math.max(1, Math.min(params.limit ?? 50, 200));
+    const messages = await this.ocmRepo.find({
+      where: { threadId: session.id, ownerUserId: params.ownerUid },
+      order: { createdAt: 'DESC' },
+      take: lim,
+    });
+
+    return {
+      session,
+      messages: messages.reverse(),
+    };
+  }
+
+  async switchSessionForWebThread(params: {
+    ownerUid: number;
+    sessionId: string;
+    chatThreadId: string;
+  }): Promise<{ ok: true; sessionId: string; chatThreadId: string; agentId: number }> {
+    const session = await this.octRepo.findOne({
+      where: { id: params.sessionId, ownerUserId: params.ownerUid },
+      relations: ['agent'],
+    });
+    if (!session) throw new NotFoundException('OpenClaw session not found');
+
+    const chatThread = await this.threadsService.findById(params.chatThreadId);
+    if (!chatThread || chatThread.userId !== params.ownerUid) {
+      throw new NotFoundException('Chat thread not found');
+    }
+    if (chatThread.platform !== ChatPlatform.WEB) {
+      throw new BadRequestException('Only WEB chat thread can switch OpenClaw sessions');
+    }
+
+    await this.threadsService.setActiveOpenclawAgent(chatThread.id, session.agentId);
+    await this.octRepo.update(session.id, {
+      chatThreadId: chatThread.id,
+      platform: ChatPlatform.WEB,
+      updatedAt: new Date(),
+    });
+
+    return {
+      ok: true,
+      sessionId: session.id,
+      chatThreadId: chatThread.id,
+      agentId: session.agentId,
+    };
+  }
+
+  async newSessionForWebThread(params: {
+    ownerUid: number;
+    chatThreadId: string;
+    agentId?: number;
+  }): Promise<OpenclawThread> {
+    const chatThread = await this.threadsService.findById(params.chatThreadId);
+    if (!chatThread || chatThread.userId !== params.ownerUid) {
+      throw new NotFoundException('Chat thread not found');
+    }
+    if (chatThread.platform !== ChatPlatform.WEB) {
+      throw new BadRequestException('Only WEB chat thread can create OpenClaw session');
+    }
+
+    const resolvedAgentId = params.agentId ?? chatThread.activeOpenclawAgentId ?? null;
+    if (!resolvedAgentId) {
+      throw new BadRequestException(
+        'agentId is required when thread has no active OpenClaw agent',
+      );
+    }
+
+    const agent = await this.agentsService.findAgentForOwner(
+      resolvedAgentId,
+      params.ownerUid,
+    );
+    if (!agent) throw new NotFoundException('OpenClaw agent not found');
+    if (agent.status === OpenclawAgentStatus.DISABLED) {
+      throw new BadRequestException('OpenClaw agent is disabled');
+    }
+
+    await this.threadsService.setActiveOpenclawAgent(chatThread.id, agent.id);
+
+    const existing = await this.octRepo.findOne({
+      where: {
+        ownerUserId: params.ownerUid,
+        agentId: agent.id,
+        chatThreadId: chatThread.id,
+      },
+    });
+    if (existing) {
+      await this.octRepo.update(existing.id, {
+        openclawSessionKey: null,
+        updatedAt: new Date(),
+      });
+      return (await this.octRepo.findOne({ where: { id: existing.id } }))!;
+    }
+
+    const created = this.octRepo.create({
+      id: uuidv4(),
+      ownerUserId: params.ownerUid,
+      agentId: agent.id,
+      chatThreadId: chatThread.id,
+      openclawSessionKey: null,
+      platform: ChatPlatform.WEB,
+      title: null,
+    });
+    return this.octRepo.save(created);
   }
 
   private async findOrCreateWorkflowThreadForRun(params: {

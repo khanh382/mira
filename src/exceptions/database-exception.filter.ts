@@ -13,39 +13,28 @@ export class DatabaseExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
 
-    // Xử lý lỗi duplicate key
+    const send = (status: number, message: string, extra?: Record<string, unknown>) => {
+      response.setHeader('X-Status-Code', String(status));
+      response.status(status).json({
+        statusCode: status,
+        message,
+        ...(extra ?? {}),
+      });
+    };
+
     if (exception.message.includes('duplicate key')) {
       const field = exception.message.match(/Key \((.*?)\)=/)?.[1];
       const value = exception.message.match(/=\((.*?)\)/)?.[1];
-
-      return response.status(HttpStatus.CONFLICT).json({
-        statusCode: HttpStatus.CONFLICT,
-        message: 'Dữ liệu đã tồn tại!',
-        field,
-        value,
-      });
+      return send(HttpStatus.CONFLICT, 'Data already exists', { field, value });
     }
 
-    // Xử lý lỗi validation
     if (exception.message.includes('violates not-null constraint')) {
       const field = exception.message.match(/column "(.*?)"/)?.[1];
-
-      return response.status(HttpStatus.BAD_REQUEST).json({
-        statusCode: HttpStatus.BAD_REQUEST,
-        message: 'Validation failed',
-        errors: [
-          {
-            field,
-            message: 'Field is required',
-          },
-        ],
+      return send(HttpStatus.BAD_REQUEST, 'Validation failed', {
+        errors: [{ field, message: 'Field is required' }],
       });
     }
 
-    // Xử lý các lỗi khác
-    return response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
-      statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-      message: 'Internal server error',
-    });
+    return send(HttpStatus.INTERNAL_SERVER_ERROR, 'Internal server error');
   }
 }

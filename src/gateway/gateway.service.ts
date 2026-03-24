@@ -10,7 +10,7 @@ import { ChatService } from '../modules/chat/chat.service';
 import { SkillsService } from '../agent/skills/skills.service';
 import { IInboundMessage } from '../agent/channels/interfaces/channel.interface';
 import { MessageRole } from '../modules/chat/entities/chat-message.entity';
-import { ChatPlatform } from '../modules/chat/entities/chat-thread.entity';
+import { ChatPlatform, ChatThread } from '../modules/chat/entities/chat-thread.entity';
 import { IPipelineContext } from '../agent/pipeline/interfaces/pipeline-context.interface';
 import { ConfigService } from '@nestjs/config';
 import { StopAllService } from '../agent/control/stop-all.service';
@@ -676,16 +676,66 @@ export class GatewayService {
     return true;
   }
 
+  private normalizeActorId(v: unknown): string {
+    return String(v ?? '').trim();
+  }
+
   /**
-   * Khi client gửi threadId cụ thể → dùng thread đó (nếu thuộc user), bỏ qua auto-resolve.
-   * Cho phép multi-session giống Cursor.
+   * Explicit threadId chỉ hợp lệ khi đúng platform và (TG/Zalo/Discord) đúng actor id.
+   * WEB không dùng được thread Telegram/Zalo/Discord và ngược lại.
+   */
+  private isExplicitThreadAllowedForChannel(
+    thread: ChatThread,
+    platform: ChatPlatform,
+    actor: { telegramId?: string; zaloId?: string; discordId?: string },
+  ): boolean {
+    if (thread.platform !== platform) return false;
+
+    const tTg = this.normalizeActorId(thread.telegramId);
+    const tZ = this.normalizeActorId(thread.zaloId);
+    const tD = this.normalizeActorId(thread.discordId);
+
+    if (platform === ChatPlatform.WEB) {
+      if (tTg || tZ || tD) return false;
+      return true;
+    }
+
+    if (platform === ChatPlatform.TELEGRAM) {
+      const a = this.normalizeActorId(actor.telegramId);
+      if (!a || !tTg) return false;
+      return tTg === a;
+    }
+
+    if (platform === ChatPlatform.ZALO) {
+      const a = this.normalizeActorId(actor.zaloId);
+      if (!a || !tZ) return false;
+      return tZ === a;
+    }
+
+    if (platform === ChatPlatform.DISCORD) {
+      const a = this.normalizeActorId(actor.discordId);
+      if (!a || !tD) return false;
+      return tD === a;
+    }
+
+    return true;
+  }
+
+  /**
+   * Khi client gửi threadId cụ thể → dùng thread đó nếu thuộc user và khớp kênh/platform.
+   * Không cho phép dùng thread của kênh khác (web ↔ telegram ↔ zalo ↔ discord).
    */
   private async resolveExplicitThread(
     userId: number,
     threadId: string,
+    platform: ChatPlatform,
+    actor: { telegramId?: string; zaloId?: string; discordId?: string },
   ): Promise<ResolvedThread | null> {
     const specific = await this.threadsService.findById(threadId);
     if (!specific || specific.userId !== userId) return null;
+    if (!this.isExplicitThreadAllowedForChannel(specific, platform, actor)) {
+      return null;
+    }
     const user = await this.usersService.findById(userId);
     if (!user) return null;
     await this.workspaceService.ensureUserWorkspace(user.identifier);
@@ -712,6 +762,7 @@ export class GatewayService {
       /** Nhiều file trong cùng một lượt (vd. album Telegram) */
       mediaPaths?: string[];
       threadId?: string;
+      onOpenclawDelta?: (delta: string) => void;
     },
   ): Promise<{
     response: string;
@@ -727,10 +778,35 @@ export class GatewayService {
       discordId: options?.discordUserId,
     };
 
-    let { user, thread, isNew } = options?.threadId
-      ? (await this.resolveExplicitThread(userId, options.threadId)) ??
-        (await this.threadResolver.resolve(userId, platform, actor))
-      : await this.threadResolver.resolve(userId, platform, actor);
+    let user: User;
+    let thread: ChatThread;
+    let isNew: boolean;
+
+    if (options?.threadId) {
+      const explicit = await this.resolveExplicitThread(
+        userId,
+        options.threadId,
+        platform,
+        actor,
+      );
+      if (!explicit) {
+        return {
+          response:
+            '⛔ Thread không hợp lệ cho kênh hiện tại (sai nền tảng hoặc phiên không thuộc người dùng / Telegram-Zalo-Discord ID này).',
+          threadId: options.threadId,
+          tokensUsed: 0,
+          runId: `invalid-thread-${Date.now()}`,
+        };
+      }
+      user = explicit.user;
+      thread = explicit.thread;
+      isNew = explicit.isNew;
+    } else {
+      const resolved = await this.threadResolver.resolve(userId, platform, actor);
+      user = resolved.user;
+      thread = resolved.thread;
+      isNew = resolved.isNew;
+    }
 
     const normalized = content.trim().toLowerCase();
 
@@ -939,6 +1015,22 @@ export class GatewayService {
 
     if (inOpenclawChat) {
       const { userTitle, botTitle } = this.getHonorificsForUser(user.identifier);
+      if (options?.onOpenclawDelta) {
+        const streamed = await this.openclawChatService.handleUserTurnStream({
+          user,
+          thread: fullThread,
+          platform,
+          effectiveContent,
+          honorifics: { userTitle, botTitle },
+          onDelta: options.onOpenclawDelta,
+        });
+        return {
+          response: streamed.response,
+          threadId: thread.id,
+          tokensUsed: 0,
+          runId: streamed.runId,
+        };
+      }
       const result = await this.openclawChatService.handleUserTurn({
         user,
         thread: fullThread,

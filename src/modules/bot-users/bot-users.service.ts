@@ -24,17 +24,32 @@ export class BotUsersService {
     return this.botUserRepo.findOne({ where: { id } });
   }
 
+  async upsertByUserId(userId: number, data: Partial<BotUser>): Promise<BotUser> {
+    const existing = await this.findByUserId(userId);
+    if (existing) {
+      return this.update(existing.id, data);
+    }
+    return this.create({ userId, ...data });
+  }
+
+  toPublicRecord(row: BotUser) {
+    return {
+      id: row.id,
+      userId: row.userId,
+      telegramBotToken: row.telegramBotToken ?? null,
+      discordBotToken: row.discordBotToken ?? null,
+      slackBotToken: row.slackBotToken ?? null,
+      zaloBotToken: row.zaloBotToken ?? null,
+      googleConsoleCloudJsonPath: row.googleConsoleCloudJsonPath ?? null,
+      createdAt: row.createdAt,
+      updateAt: row.updateAt,
+    };
+  }
+
   async upsertGoogleCredentialsPath(
     userId: number,
     googleConsoleCloudJsonPath: string,
   ): Promise<BotUser> {
-    const existing = await this.findByUserId(userId);
-    if (existing) {
-      return this.update(existing.id, { googleConsoleCloudJsonPath });
-    }
-    return this.create({
-      userId,
-      googleConsoleCloudJsonPath,
-    });
+    return this.upsertByUserId(userId, { googleConsoleCloudJsonPath });
   }
 }

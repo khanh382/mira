@@ -16,6 +16,8 @@ import {
   UpdateWorkflowDto,
   ReplaceWorkflowTasksDto,
   WorkflowTaskInputDto,
+  AddWorkflowTaskDto,
+  PatchWorkflowTaskDto,
 } from './dto/workflow.dto';
 import { TaskWorkflowQueueService } from './task-workflow-queue.service';
 import { TasksService } from '../tasks/tasks.service';
@@ -182,6 +184,110 @@ export class TaskWorkflowsService {
     }
 
     return { runId };
+  }
+
+  /** Thêm 1 task vào workflow tại vị trí chỉ định, tự shift order các task sau lên. */
+  async addTask(wfId: number, userId: number, dto: AddWorkflowTaskDto): Promise<Workflow> {
+    await this.requireOwnedWorkflow(wfId, userId);
+    await this.assertTasksOwnedByUser(userId, [{ taskId: dto.taskId, taskOrder: 0 }]);
+
+    const existing = await this.wfTaskRepo.find({
+      where: { workflowId: wfId },
+      order: { taskOrder: 'ASC' },
+    });
+
+    // Xác định vị trí chèn: sau insertAfterOrder, hoặc cuối nếu không truyền.
+    const insertAt =
+      dto.insertAfterOrder !== undefined ? dto.insertAfterOrder + 1 : existing.length;
+
+    // Shift tất cả task có order >= insertAt lên 1.
+    const toShift = existing.filter((t) => t.taskOrder >= insertAt);
+    for (const t of toShift) {
+      await this.wfTaskRepo.update(t.id, { taskOrder: t.taskOrder + 1 });
+    }
+
+    await this.wfTaskRepo.save(
+      this.wfTaskRepo.create({
+        workflowId: wfId,
+        taskId: dto.taskId,
+        taskOrder: insertAt,
+        onFailure: dto.onFailure ?? WfTaskOnFailure.STOP,
+      }),
+    );
+
+    return this.findOneForUser(wfId, userId);
+  }
+
+  /** Xoá 1 workflow-task entry theo wtId, tự compact lại order. */
+  async removeTask(wfId: number, userId: number, wtId: number): Promise<Workflow> {
+    await this.requireOwnedWorkflow(wfId, userId);
+
+    const target = await this.wfTaskRepo.findOne({ where: { id: wtId, workflowId: wfId } });
+    if (!target) throw new NotFoundException('Workflow task không tồn tại.');
+
+    const total = await this.wfTaskRepo.count({ where: { workflowId: wfId } });
+    if (total <= 1) throw new BadRequestException('Workflow phải có ít nhất 1 task.');
+
+    await this.wfTaskRepo.delete(wtId);
+
+    // Compact order: các task sau vị trí bị xoá giảm 1.
+    const after = await this.wfTaskRepo.find({
+      where: { workflowId: wfId },
+      order: { taskOrder: 'ASC' },
+    });
+    for (let i = 0; i < after.length; i++) {
+      if (after[i].taskOrder !== i) {
+        await this.wfTaskRepo.update(after[i].id, { taskOrder: i });
+      }
+    }
+
+    return this.findOneForUser(wfId, userId);
+  }
+
+  /** Cập nhật 1 workflow-task entry: đổi task (swap), đổi onFailure, hoặc reorder (drag-drop). */
+  async patchTask(wfId: number, userId: number, wtId: number, dto: PatchWorkflowTaskDto): Promise<Workflow> {
+    await this.requireOwnedWorkflow(wfId, userId);
+
+    const target = await this.wfTaskRepo.findOne({ where: { id: wtId, workflowId: wfId } });
+    if (!target) throw new NotFoundException('Workflow task không tồn tại.');
+
+    if (dto.taskId !== undefined && dto.taskId !== target.taskId) {
+      await this.assertTasksOwnedByUser(userId, [{ taskId: dto.taskId, taskOrder: 0 }]);
+      target.taskId = dto.taskId;
+    }
+
+    if (dto.onFailure !== undefined) {
+      target.onFailure = dto.onFailure;
+    }
+
+    if (dto.taskOrder !== undefined && dto.taskOrder !== target.taskOrder) {
+      const all = await this.wfTaskRepo.find({
+        where: { workflowId: wfId },
+        order: { taskOrder: 'ASC' },
+      });
+      const maxOrder = all.length - 1;
+      const newOrder = Math.max(0, Math.min(dto.taskOrder, maxOrder));
+      const oldOrder = target.taskOrder;
+
+      // Shift các task nằm giữa oldOrder và newOrder.
+      if (newOrder > oldOrder) {
+        for (const t of all) {
+          if (t.id !== wtId && t.taskOrder > oldOrder && t.taskOrder <= newOrder) {
+            await this.wfTaskRepo.update(t.id, { taskOrder: t.taskOrder - 1 });
+          }
+        }
+      } else {
+        for (const t of all) {
+          if (t.id !== wtId && t.taskOrder >= newOrder && t.taskOrder < oldOrder) {
+            await this.wfTaskRepo.update(t.id, { taskOrder: t.taskOrder + 1 });
+          }
+        }
+      }
+      target.taskOrder = newOrder;
+    }
+
+    await this.wfTaskRepo.save(target);
+    return this.findOneForUser(wfId, userId);
   }
 
   private async requireOwnedWorkflow(id: number, userId: number): Promise<Workflow> {

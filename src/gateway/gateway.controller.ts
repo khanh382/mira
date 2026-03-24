@@ -12,6 +12,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { GatewayService } from './gateway.service';
 import { SkillsService } from '../agent/skills/skills.service';
 import { SendMessageDto, ResetThreadDto } from './dto/send-message.dto';
+import { ChatPlatform } from '../modules/chat/entities/chat-thread.entity';
 
 @Controller('gateway')
 export class GatewayController {
@@ -27,6 +28,7 @@ export class GatewayController {
     const userId = req.user.uid;
     return this.gatewayService.handleMessage(userId, dto.content, {
       channelId: dto.channelId,
+      platform: ChatPlatform.WEB,
       model: dto.model,
       mediaUrl: dto.mediaUrl,
       mediaPath: dto.mediaPath,

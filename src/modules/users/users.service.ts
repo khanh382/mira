@@ -22,6 +22,28 @@ export class UsersService {
     return this.userRepo.findOne({ where: { identifier } });
   }
 
+  async findByUname(uname: string): Promise<User | null> {
+    return this.userRepo.findOne({ where: { uname } });
+  }
+
+  /**
+   * Tìm user theo email, identifier, hoặc uname (theo thứ tự ưu tiên).
+   * Dùng chung cho login, forgot-password, reset-password.
+   */
+  async findByLoginKey(opts: {
+    email?: string;
+    identifier?: string;
+    uname?: string;
+  }): Promise<User | null> {
+    const { email, identifier, uname } = opts;
+    let user: User | null = null;
+    if (email?.trim()) user = await this.findByEmail(email.trim());
+    if (!user && identifier?.trim())
+      user = await this.findByIdentifier(identifier.trim());
+    if (!user && uname?.trim()) user = await this.findByUname(uname.trim());
+    return user;
+  }
+
   async findByPlatformId(field: string, value: string): Promise<User | null> {
     return this.userRepo.findOne({ where: { [field]: value } as any });
   }
