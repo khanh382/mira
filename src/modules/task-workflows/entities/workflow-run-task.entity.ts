@@ -6,6 +6,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { WorkflowRun } from './workflow-run.entity';
+import { TaskRun } from '../../tasks/entities/task-run.entity';
 
 export enum WorkflowRunTaskStatus {
   PENDING = 'pending',
@@ -36,6 +37,10 @@ export class WorkflowRunTask {
   /** FK nullable — tạo sau khi task_run được enqueue */
   @Column({ name: 'task_run_id', type: 'uuid', nullable: true })
   taskRunId: string | null;
+
+  @ManyToOne(() => TaskRun, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'task_run_id' })
+  taskRun: TaskRun | null;
 
   @Column({
     name: 'status',

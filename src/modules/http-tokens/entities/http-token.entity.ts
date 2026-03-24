@@ -2,10 +2,12 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
-  Unique,
   UpdateDateColumn,
 } from 'typeorm';
+import { User } from '../../users/entities/user.entity';
 
 export enum HttpTokenAuthType {
   API_KEY = 'api_key',
@@ -14,10 +16,12 @@ export enum HttpTokenAuthType {
 }
 
 @Entity('http_tokens')
-@Unique('uq_http_tokens_domain', ['domain'])
 export class HttpToken {
   @PrimaryGeneratedColumn()
   id: number;
+
+  @Column({ type: 'varchar', length: 120, unique: true })
+  code: string;
 
   @Column({ type: 'varchar', length: 255 })
   domain: string;
@@ -43,6 +47,10 @@ export class HttpToken {
 
   @Column({ name: 'created_by_uid', type: 'int', nullable: true })
   createdByUid: number | null;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'created_by_uid', referencedColumnName: 'uid' })
+  createdBy: User | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

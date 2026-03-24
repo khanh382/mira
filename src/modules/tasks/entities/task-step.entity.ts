@@ -6,6 +6,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { Task } from './task.entity';
+import { OpenclawAgent } from '../../openclaw-agents/entities/openclaw-agent.entity';
 
 export enum StepExecutorType {
   INTERNAL = 'internal',
@@ -51,6 +52,10 @@ export class TaskStep {
   /** OpenClaw agent id — bắt buộc khi executor_type = 'openclaw'. */
   @Column({ name: 'oa_id', nullable: true })
   oaId: number | null;
+
+  @ManyToOne(() => OpenclawAgent, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'oa_id' })
+  openclawAgent: OpenclawAgent | null;
 
   @Column({ name: 'prompt', type: 'text' })
   prompt: string;

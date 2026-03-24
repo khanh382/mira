@@ -148,10 +148,6 @@ export class ExecSkill implements ISkillRunner {
     commandText: string,
     cwd: string,
   ): Promise<string | null> {
-    const strictSandbox =
-      String(process.env.EXEC_STRICT_SANDBOX ?? 'true').toLowerCase() !== 'false';
-    if (!strictSandbox) return null;
-
     const allowedBinaries = this.parseAllowedBinaries(
       process.env.EXEC_ALLOWED_BINARIES,
     );
@@ -159,7 +155,7 @@ export class ExecSkill implements ISkillRunner {
     if (!binary) {
       return 'Exec policy violation: command rỗng hoặc không parse được binary.';
     }
-    if (!allowedBinaries.has(binary)) {
+    if (!allowedBinaries.has('*') && !allowedBinaries.has(binary)) {
       return (
         `Exec policy violation: binary "${binary}" không nằm trong allowlist. ` +
         `Allowed: ${[...allowedBinaries].join(', ')}`
@@ -172,6 +168,10 @@ export class ExecSkill implements ISkillRunner {
         'Exec policy violation: không cho phép shell operators (; && || | ` < > $( ) newline).'
       );
     }
+
+    const strictSandbox =
+      String(process.env.EXEC_STRICT_SANDBOX ?? 'true').toLowerCase() !== 'false';
+    if (!strictSandbox) return null;
 
     // Chặn các cách đổi repo mục tiêu trong command để tránh thoát sandbox workdir.
     if (
@@ -275,12 +275,14 @@ export class ExecSkill implements ISkillRunner {
   private parseAllowedBinaries(raw?: string): Set<string> {
     const fallback = 'git';
     const value = (raw ?? fallback).trim() || fallback;
-    return new Set(
-      value
-        .split(',')
-        .map((x) => x.trim().toLowerCase())
-        .filter((x) => /^[a-z0-9._-]+$/.test(x)),
-    );
+    const items = value
+      .split(',')
+      .map((x) => x.trim().toLowerCase())
+      .filter((x) => x === '*' || /^[a-z0-9._-]+$/.test(x));
+    if (items.includes('*')) {
+      return new Set(['*']);
+    }
+    return new Set(items);
   }
 
   private extractBinary(commandText: string): string | null {

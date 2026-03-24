@@ -13,6 +13,9 @@ function interpolate(template: string, previous: string): string {
   return template.replace(/\{\{\s*previous\s*\}\}/gi, previous);
 }
 
+const HTTP_TOKEN_EXECUTION_POLICY =
+  'Dùng token từ http_tokens, không hỏi lại credentials.';
+
 @Injectable()
 export class TaskExecutorService {
   private readonly logger = new Logger(TaskExecutorService.name);
@@ -194,6 +197,35 @@ export class TaskExecutorService {
     );
   }
 
+  /**
+   * Với các step liên quan HTTP/WordPress, luôn chèn policy dùng token DB để
+   * hạn chế agent hỏi lại credentials.
+   */
+  private shouldAppendHttpTokenPolicy(
+    normalizedSkill: string | undefined,
+    prompt: string,
+  ): boolean {
+    const s = String(normalizedSkill ?? '').toLowerCase();
+    if (s === 'http_request' || s === 'wordpress_content_api') return true;
+
+    const p = String(prompt ?? '').toLowerCase();
+    return (
+      p.includes('http_request') ||
+      p.includes('wordpress_content_api') ||
+      p.includes('http_tokens') ||
+      p.includes('wp-json')
+    );
+  }
+
+  private appendExecutionPolicy(prompt: string, policy: string): string {
+    if (!prompt) return policy;
+    const p = prompt.toLowerCase();
+    if (p.includes('http_tokens') && p.includes('không hỏi lại credentials')) {
+      return prompt;
+    }
+    return `${prompt}\n\n[Policy bắt buộc] ${policy}`;
+  }
+
   private async runInternalStep(
     userId: number,
     taskId: number,
@@ -205,10 +237,13 @@ export class TaskExecutorService {
     const threadId = `task-run:${taskId}:step:${stepIndex}`;
     const normalizedSkill = this.normalizeSkillCodeForPipeline(skillCode);
     const hints = normalizedSkill ? [normalizedSkill] : [];
+    const effectivePrompt = this.shouldAppendHttpTokenPolicy(normalizedSkill, prompt)
+      ? this.appendExecutionPolicy(prompt, HTTP_TOKEN_EXECUTION_POLICY)
+      : prompt;
     const msg: IInboundMessage = {
       channelId: 'task_runner',
       senderId: String(userId),
-      content: this.buildUserContentWithToolHints(prompt, hints),
+      content: this.buildUserContentWithToolHints(effectivePrompt, hints),
       timestamp: new Date(),
     };
 

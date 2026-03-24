@@ -51,6 +51,11 @@ const PARAMETERS_SCHEMA = {
       type: 'string',
       description: 'Optional domain override to resolve auth token record',
     },
+    authCode: {
+      type: 'string',
+      description:
+        'Optional token code to resolve auth in http_tokens (preferred over authDomain)',
+    },
     requireExplicitDomain: {
       type: 'boolean',
       description:
@@ -159,11 +164,15 @@ export class HttpRequestSkill implements ISkillRunner {
   }
 
   private async buildAuthHeaders(
+    authCode: string | undefined,
     authDomain: string | undefined,
     urlHost: string,
   ): Promise<Record<string, string>> {
+    const code = String(authCode ?? '').trim();
     const domain = String(authDomain ?? '').trim() || urlHost;
-    const row = await this.httpTokensService.getByDomain(domain);
+    const row = code
+      ? await this.httpTokensService.getByCode(code)
+      : await this.httpTokensService.getByDomain(domain);
     if (!row) return {};
 
     if (row.authType === HttpTokenAuthType.API_KEY) {
@@ -209,6 +218,7 @@ export class HttpRequestSkill implements ISkillRunner {
       const host = finalUrl.hostname.toLowerCase().replace(/^www\./, '');
       const writeMethod = method !== 'GET';
       const explicitAuthDomain = String(params.authDomain ?? '').trim();
+      const explicitAuthCode = String(params.authCode ?? '').trim();
 
       if (writeMethod && requireExplicitDomain && !explicitAuthDomain) {
         return {
@@ -244,6 +254,7 @@ export class HttpRequestSkill implements ISkillRunner {
       }
 
       const authHeaders = await this.buildAuthHeaders(
+        explicitAuthCode || undefined,
         explicitAuthDomain || undefined,
         host,
       );

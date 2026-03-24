@@ -11,6 +11,7 @@ import { UserLevel } from '../users/entities/user.entity';
 import { HttpToken, HttpTokenAuthType } from './entities/http-token.entity';
 
 export interface UpsertHttpTokenInput {
+  code: string;
   domain: string;
   authType: HttpTokenAuthType;
   headerName?: string | null;
@@ -20,6 +21,7 @@ export interface UpsertHttpTokenInput {
 }
 
 export interface CreateMyHttpTokenInput {
+  code: string;
   domain: string;
   authType: HttpTokenAuthType;
   headerName?: string | null;
@@ -29,6 +31,7 @@ export interface CreateMyHttpTokenInput {
 }
 
 export interface UpdateMyHttpTokenInput {
+  code?: string;
   domain?: string;
   authType?: HttpTokenAuthType;
   headerName?: string | null;
@@ -58,6 +61,17 @@ export class HttpTokensService {
     return host.replace(/^www\./, '');
   }
 
+  normalizeCode(input: string): string {
+    const raw = String(input ?? '').trim().toLowerCase();
+    if (!raw) throw new BadRequestException('code is required');
+    if (!/^[a-z0-9._-]{3,120}$/.test(raw)) {
+      throw new BadRequestException(
+        'code is invalid (allowed: a-z, 0-9, ., _, -, length 3-120)',
+      );
+    }
+    return raw;
+  }
+
   private maskToken(token: string): string {
     const t = String(token ?? '');
     if (t.length <= 8) return '***';
@@ -65,6 +79,7 @@ export class HttpTokensService {
   }
 
   private validateInput(input: UpsertHttpTokenInput): void {
+    this.normalizeCode(input.code);
     if (!String(input.token ?? '').trim()) {
       throw new BadRequestException('token is required');
     }
@@ -96,6 +111,7 @@ export class HttpTokensService {
   toPublicRecord(row: HttpToken) {
     return {
       id: row.id,
+      code: row.code,
       domain: row.domain,
       authType: row.authType,
       headerName: row.headerName,
@@ -114,6 +130,7 @@ export class HttpTokensService {
   toPublicWebsiteRecord(row: HttpToken) {
     return {
       id: row.id,
+      code: row.code,
       domain: row.domain,
       authType: row.authType,
       headerName: row.headerName,
@@ -127,7 +144,7 @@ export class HttpTokensService {
   }
 
   async list(): Promise<HttpToken[]> {
-    return this.tokenRepo.find({ order: { domain: 'ASC' } });
+    return this.tokenRepo.find({ order: { code: 'ASC' } });
   }
 
   async getById(id: number): Promise<HttpToken> {
@@ -137,7 +154,14 @@ export class HttpTokensService {
   }
 
   async getByDomain(domain: string): Promise<HttpToken | null> {
-    return this.tokenRepo.findOne({ where: { domain: this.normalizeDomain(domain) } });
+    return this.tokenRepo.findOne({
+      where: { domain: this.normalizeDomain(domain) },
+      order: { id: 'DESC' },
+    });
+  }
+
+  async getByCode(code: string): Promise<HttpToken | null> {
+    return this.tokenRepo.findOne({ where: { code: this.normalizeCode(code) } });
   }
 
   async upsert(
@@ -145,9 +169,11 @@ export class HttpTokensService {
     actorUid?: number,
   ): Promise<HttpToken> {
     this.validateInput(input);
+    const code = this.normalizeCode(input.code);
     const domain = this.normalizeDomain(input.domain);
-    const existing = await this.tokenRepo.findOne({ where: { domain } });
+    const existing = await this.tokenRepo.findOne({ where: { code } });
     const payload: Partial<HttpToken> = {
+      code,
       domain,
       authType: input.authType,
       headerName: input.headerName ? String(input.headerName).trim() : null,
@@ -172,7 +198,7 @@ export class HttpTokensService {
   async listByUser(uid: number): Promise<HttpToken[]> {
     return this.tokenRepo.find({
       where: { createdByUid: uid },
-      order: { domain: 'ASC' },
+      order: { code: 'ASC' },
     });
   }
 
@@ -188,14 +214,17 @@ export class HttpTokensService {
       token: String(input.token ?? ''),
     });
     const domain = this.normalizeDomain(input.domain);
-    const existing = await this.tokenRepo.findOne({ where: { domain } });
+    const code = this.normalizeCode(input.code);
+    const existingCode = await this.tokenRepo.findOne({ where: { code } });
+    if (existingCode) {
+      throw new BadRequestException('Code already exists');
+    }
+    const existing = await this.tokenRepo.findOne({ where: { domain, createdByUid: uid } });
     if (existing) {
-      if (existing.createdByUid === uid) {
-        throw new BadRequestException('Domain already exists in your websites');
-      }
-      throw new ForbiddenException('Domain already belongs to another user');
+      throw new BadRequestException('Domain already exists in your websites');
     }
     const row = this.tokenRepo.create({
+      code,
       domain,
       authType: input.authType,
       headerName: input.headerName ? String(input.headerName).trim() : null,
@@ -216,14 +245,23 @@ export class HttpTokensService {
 
     if (input.domain !== undefined) {
       const normalized = this.normalizeDomain(input.domain);
-      const existing = await this.tokenRepo.findOne({ where: { domain: normalized } });
+      const existing = await this.tokenRepo.findOne({
+        where: { domain: normalized, createdByUid: uid },
+      });
       if (existing && existing.id !== item.id) {
-        if (existing.createdByUid === uid) {
-          throw new BadRequestException('Domain already exists in your websites');
-        }
-        throw new ForbiddenException('Domain already belongs to another user');
+        throw new BadRequestException('Domain already exists in your websites');
       }
       item.domain = normalized;
+    }
+    if (input.code !== undefined) {
+      const normalizedCode = this.normalizeCode(input.code);
+      const existingCode = await this.tokenRepo.findOne({
+        where: { code: normalizedCode },
+      });
+      if (existingCode && existingCode.id !== item.id) {
+        throw new BadRequestException('Code already exists');
+      }
+      item.code = normalizedCode;
     }
     if (input.authType !== undefined) item.authType = input.authType;
     if (input.headerName !== undefined) {
@@ -244,6 +282,7 @@ export class HttpTokensService {
 
     // Validate theo authType sau khi merge patch.
     this.validateInput({
+      code: item.code,
       domain: item.domain,
       authType: item.authType,
       headerName: item.headerName,

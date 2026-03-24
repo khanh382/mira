@@ -439,6 +439,41 @@ export class AgentRunStep {
       ) {
         const textOut = llmOutput.content ?? llmResponse.content ?? '';
         if (!this.naturalToolBehavior) {
+          const explicitExecCommand = this.extractExplicitExecCommand(
+            context.processedContent,
+          );
+          const hasExecTool = (llmInput.tools ?? tools).some(
+            (t) => t.name === 'exec',
+          );
+          if (explicitExecCommand && hasExecTool) {
+            this.logger.warn(
+              `[${context.runId}] No tool_calls; fallback to explicit exec command.`,
+            );
+            const fallbackToolCall: IToolCall = {
+              id: `fallback_exec_${Date.now()}`,
+              name: 'exec',
+              arguments: JSON.stringify({ command: explicitExecCommand }),
+            };
+            messages.push({
+              role: 'assistant',
+              content: '',
+              toolCalls: [fallbackToolCall],
+            });
+            const { skillCode, result, record } = await this.executeToolCall(
+              fallbackToolCall,
+              context,
+            );
+            allToolCalls.push(record);
+            const toolContent = serializeToolResultForLlm(result);
+            messages.push({
+              role: 'tool',
+              toolCallId: fallbackToolCall.id,
+              content: toolContent,
+            });
+            continue;
+          }
+        }
+        if (!this.naturalToolBehavior) {
           const recovered =
             await this.tryRecoverSimulatedSkillsRegistryFromAssistantText(
               context,
@@ -596,6 +631,18 @@ export class AgentRunStep {
     }
     const s = this.stableStringifyForSignature(params);
     return s.length > 220 ? `${s.slice(0, 220)}…` : s;
+  }
+
+  private extractExplicitExecCommand(text: string): string | null {
+    const raw = String(text ?? '').trim();
+    if (!raw) return null;
+    const oneLine = raw.replace(/\r/g, '');
+    const match =
+      oneLine.match(/(?:^|[\n:]\s*)exec\s+([^\n]+)/i) ??
+      oneLine.match(/^\/exec\s+([^\n]+)/i);
+    if (!match?.[1]) return null;
+    const command = match[1].trim().replace(/^`+|`+$/g, '');
+    return command.length > 0 ? command : null;
   }
 
   private async executeToolCall(
