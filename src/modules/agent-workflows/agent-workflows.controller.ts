@@ -23,8 +23,9 @@ import {
 
 /**
  * API-only: thiết lập và chạy tiến trình OpenClaw nối tiếp — không qua chat/agent.
+ * Route prefix đổi thành `openclaw-workflows` để phân biệt với hệ thống task/workflow mới (`/tasks`, `/task-workflows`).
  */
-@Controller('agent-workflows')
+@Controller('openclaw-workflows')
 export class AgentWorkflowsController {
   constructor(private readonly service: AgentWorkflowsService) {}
 

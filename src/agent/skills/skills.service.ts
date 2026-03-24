@@ -102,6 +102,53 @@ export class SkillsService implements OnModuleInit {
   }
 
   /**
+   * Catalog cho user/API: kết hợp in-memory definition + display_name từ DB.
+   * Trả về danh sách thân thiện để dùng khi chọn skill_code cho task_steps.
+   */
+  async getSkillCatalog(options?: {
+    ownerOnly?: boolean;
+    /** Mặc định true: chỉ trả skill có is_display=true. Truyền false để lấy toàn bộ (admin). */
+    displayOnly?: boolean;
+  }): Promise<Array<{
+    skillCode: string;
+    skillName: string;
+    displayName: string | null;
+    description: string;
+    category: string;
+    minModelTier: string;
+    ownerOnly: boolean;
+    skillType: string;
+    isActive: boolean;
+    isDisplay: boolean;
+  }>> {
+    const dbRows = await this.skillRepo.find({ where: { isActive: true } });
+    const dbMap = new Map(dbRows.map((r) => [r.code, r]));
+
+    const showDisplayOnly = options?.displayOnly !== false;
+
+    const defs = this.listCodeSkills();
+    return defs
+      .filter((d) => !options?.ownerOnly || d.ownerOnly)
+      .map((d) => {
+        const row = dbMap.get(d.code);
+        return {
+          skillCode: d.code,
+          skillName: d.name,
+          displayName: row?.displayName ?? null,
+          description: d.description,
+          category: d.category,
+          minModelTier: d.minModelTier ?? 'cheap',
+          ownerOnly: d.ownerOnly ?? false,
+          skillType: 'built_in',
+          isActive: true,
+          isDisplay: row?.isDisplay ?? true,
+        };
+      })
+      .filter((s) => !showDisplayOnly || s.isDisplay)
+      .sort((a, b) => a.category.localeCompare(b.category) || a.skillCode.localeCompare(b.skillCode));
+  }
+
+  /**
    * Trả về tổng hợp tất cả skills (cả code và prompt).
    */
   listAllSkills(): Array<ISkillDefinition & { available: boolean }> {

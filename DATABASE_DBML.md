@@ -301,6 +301,136 @@ Table openclaw_messages {
   extra jsonb [null]
   created_at timestamp
 }
+
+// ─── Task/Workflow Engine mới (src/modules/tasks, task-workflows, cron-jobs) ─────────────────
+
+// Định nghĩa tác vụ đa-bước: một task gồm nhiều steps, mỗi step dùng internal pipeline hoặc OpenClaw.
+Table tasks {
+  task_id integer [pk, increment]
+  uid integer [ref: > users.uid]
+  task_code varchar [unique]
+  name varchar
+  description text [null]
+  enabled boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+// Các bước trong task: thứ tự, executor type, skill gợi ý hoặc OpenClaw agent, prompt, retry, timeout.
+Table task_steps {
+  step_id integer [pk, increment]
+  task_id integer [ref: > tasks.task_id]
+  step_order integer
+  name varchar
+  executor_type enum('internal', 'openclaw') [default: 'internal']
+  skill_code varchar [null]
+  oa_id integer [ref: > openclaw_agents.oa_id, null]
+  prompt text
+  retry_count integer [default: 0]
+  timeout_ms integer [default: 120000]
+  on_failure enum('stop', 'skip', 'continue') [default: 'stop']
+}
+
+// Một lần chạy task: trigger, trạng thái, tóm tắt, context JSON.
+Table task_runs {
+  run_id uuid [pk]
+  task_id integer [ref: > tasks.task_id]
+  uid integer [ref: > users.uid]
+  status enum('pending', 'running', 'completed', 'failed', 'cancelled') [default: 'pending']
+  trigger enum('manual', 'cron', 'workflow', 'chat') [default: 'manual']
+  current_step integer [default: 0]
+  error text [null]
+  summary text [null]
+  context jsonb [null]
+  started_at timestamptz [null]
+  finished_at timestamptz [null]
+  created_at timestamptz
+}
+
+// Chi tiết từng bước trong lần chạy: input/output, số lần thử, metadata.
+Table task_run_steps {
+  run_step_id uuid [pk]
+  run_id uuid [ref: > task_runs.run_id]
+  step_index integer
+  executor_type varchar
+  skill_code varchar [null]
+  oa_id integer [null]
+  status enum('pending', 'running', 'completed', 'failed', 'skipped') [default: 'pending']
+  input_snapshot text
+  output text [null]
+  error text [null]
+  attempt integer [default: 1]
+  max_attempts integer [default: 1]
+  metadata jsonb [null]
+  started_at timestamptz [null]
+  finished_at timestamptz [null]
+}
+
+// Workflow nối tiếp nhiều task theo thứ tự.
+Table workflows {
+  wf_id integer [pk, increment]
+  uid integer [ref: > users.uid]
+  name varchar
+  description text [null]
+  enabled boolean [default: true]
+  created_at timestamptz
+  updated_at timestamptz
+}
+
+// Liên kết task vào workflow theo thứ tự, với on_failure policy.
+Table workflow_tasks {
+  wt_id integer [pk, increment]
+  wf_id integer [ref: > workflows.wf_id]
+  task_id integer [ref: > tasks.task_id]
+  task_order integer
+  on_failure enum('stop', 'skip', 'continue') [default: 'stop']
+}
+
+// Một lần chạy workflow: trigger, trạng thái, tóm tắt.
+Table workflow_runs {
+  wfr_id uuid [pk]
+  wf_id integer [ref: > workflows.wf_id]
+  uid integer [ref: > users.uid]
+  status enum('pending', 'running', 'completed', 'failed', 'cancelled') [default: 'pending']
+  trigger enum('manual', 'cron', 'chat') [default: 'manual']
+  current_task_order integer [default: 0]
+  error text [null]
+  summary text [null]
+  context jsonb [null]
+  started_at timestamptz [null]
+  finished_at timestamptz [null]
+  created_at timestamptz
+}
+
+// Chi tiết từng task trong lần chạy workflow, kèm FK sang task_runs.
+Table workflow_run_tasks {
+  wrt_id uuid [pk]
+  wfr_id uuid [ref: > workflow_runs.wfr_id]
+  task_id integer
+  task_order integer
+  task_run_id uuid [ref: > task_runs.run_id, null]
+  status enum('pending', 'running', 'completed', 'failed', 'skipped') [default: 'pending']
+  error text [null]
+  started_at timestamptz [null]
+  finished_at timestamptz [null]
+}
+
+// Cron job linh hoạt: target là task hoặc workflow, auto-disable sau N lỗi liên tiếp.
+Table cron_jobs {
+  cj_id integer [pk, increment]
+  uid integer [ref: > users.uid]
+  name varchar
+  cron_expression varchar
+  target_type enum('task', 'workflow')
+  target_id integer
+  enabled boolean [default: true]
+  max_consecutive_failures integer [default: 3]
+  consecutive_failures integer [default: 0]
+  last_run_at timestamptz [null]
+  last_error text [null]
+  created_at timestamptz
+  updated_at timestamptz
+}
 ```
 
 ## Ghi chu
@@ -319,3 +449,5 @@ Table openclaw_messages {
 - OpenClaw (`src/modules/openclaw-agents/`): đăng ký Gateway do user tự host; `openclaw_threads` / `openclaw_messages` tách khỏi `chat_*`. Cột `openclaw_messages.extra` là **JSONB** trong PostgreSQL (entity `jsonb`).
 - Tiến trình OpenClaw nối tiếp: `agent_workflow_runs.wr_summary`, **`wr_context`** (JSONB nhớ tạm điều phối); `agent_workflow_run_steps` lưu snapshot `oa_name_snapshot`, `oa_expertise_snapshot` và `wrs_metadata` (JSONB). Mô tả: `brains/_shared/WORKFLOW_RUN_HISTORY.md`.
 - **User preferences (Phase 4):** `user_preferences` — một dòng / (uid, category, pref_key); `category` là chuỗi (vd. `communication`, `tool_usage`, …). `user_preference_logs` — FK logic tới `pref_id`; `thread_id` trỏ thread nơi có bằng chứng. Xem entity: `src/modules/users/entities/user-preference*.entity.ts`. Dev có thể bật `DB_SYNCHRONIZE=true` để TypeORM tạo bảng; production nên migration tay.
+- **Task/Workflow Engine:** `tasks` + `task_steps` + `task_runs` + `task_run_steps` — đa-bước linh hoạt (internal pipeline hoặc OpenClaw); `workflows` + `workflow_tasks` + `workflow_runs` + `workflow_run_tasks` — nối tiếp nhiều task; `cron_jobs` — kích hoạt task hoặc workflow theo lịch. Module: `src/modules/tasks/`, `src/modules/task-workflows/`, `src/modules/cron-jobs/`. API: `POST /tasks`, `POST /task-workflows`, `POST /cron-jobs`.
+- **OpenClaw workflow (cũ):** `agent_workflows*` — dùng để chain nhiều OpenClaw agent. Route API đổi thành `/openclaw-workflows` (thay vì `/agent-workflows` cũ). Module: `src/modules/agent-workflows/`.

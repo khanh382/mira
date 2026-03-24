@@ -70,6 +70,16 @@ export const SYSTEM_BOT_MENU_ENTRIES: readonly BotMenuEntry[] = [
     telegramDescription: 'Bật lại toàn hệ thống sau stopall (owner)',
     discordDescription: 'Bật lại hệ thống (owner)',
   },
+  {
+    command: 'run_task',
+    telegramDescription: '/run_task <id|code> — chạy task ngay (owner/colleague)',
+    discordDescription: 'Chạy task theo id hoặc code (owner/colleague)',
+  },
+  {
+    command: 'run_workflow',
+    telegramDescription: '/run_workflow <id> — chạy workflow ngay (owner/colleague)',
+    discordDescription: 'Chạy workflow theo id (owner/colleague)',
+  },
 ];
 
 /** Zalo quick reply: title ngắn (≤30), payload gửi lại như tin nhắn text */
@@ -101,6 +111,8 @@ export function buildMenuHelpText(): string {
     '- /brain_read [đường-dẫn] — thư mục: liệt kê con một cấp; file: nội dung. Bỏ trống = gốc user',
     '- /clean_media_incoming — xóa nội dung media/incoming (không nằm trong menu bot)',
     '- /list_tools — giống /list_skills (mã tool backend)',
+    '- /run_task <id|code> — enqueue task ngay (owner/colleague)',
+    '- /run_workflow <id> — enqueue workflow ngay (owner/colleague)',
     '- /run_skill <mã> <json hoặc key=value> — chạy gói trong $BRAIN_DIR/_shared/skills/',
     '- /delete_skill <mã> — xóa gói (owner)',
     '- /update_skill <mã> <json patch> — sửa skill.json (owner)',

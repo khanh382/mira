@@ -22,6 +22,8 @@ import { PreferenceExtractorService } from '../agent/learning/preference-extract
 import { createHash } from 'crypto';
 import { buildMenuHelpText } from '../modules/bot-users/bot-platform-menu';
 import { sanitizeLlmDisplayLeakage } from '../modules/bot-users/llm-output-sanitize';
+import { TasksService } from '../modules/tasks/tasks.service';
+import { TaskWorkflowsService } from '../modules/task-workflows/task-workflows.service';
 
 /**
  * GatewayService — trung tâm điều phối giữa entry points và agent pipeline.
@@ -506,6 +508,67 @@ export class GatewayService {
       return { handled: true, response: JSON.stringify(result, null, 2) };
     }
 
+    // /run_task <task_id|task_code>
+    const runTaskMatch = text.match(/^\/run_task(?:@\S+)?\s+(\S+)\s*$/i);
+    if (runTaskMatch) {
+      const taskRef = runTaskMatch[1].trim();
+      const u = await this.usersService.findById(context.userId);
+      if (!u || u.level === UserLevel.CLIENT) {
+        return {
+          handled: true,
+          response: '❌ Chỉ owner và colleague mới có thể chạy task.',
+        };
+      }
+      try {
+        const taskId = Number(taskRef);
+        const tasks = await this.tasksService.list(context.userId);
+        const target = !isNaN(taskId)
+          ? tasks.find((t) => t.id === taskId)
+          : tasks.find((t) => t.code === taskRef);
+        if (!target) {
+          return {
+            handled: true,
+            response: `❌ Không tìm thấy task "${taskRef}". Dùng /run_task <task_id> hoặc /run_task <task_code>.`,
+          };
+        }
+        const { runId } = await this.tasksService.enqueueRunForUser(target.id, context.userId);
+        return {
+          handled: true,
+          response: `✅ Đã enqueue task "${target.name}" (code: ${target.code}).\nRun ID: ${runId}\nKiểm tra tiến trình qua API: GET /tasks/runs/${runId}`,
+        };
+      } catch (e) {
+        return {
+          handled: true,
+          response: `❌ Lỗi khi chạy task: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    }
+
+    // /run_workflow <workflow_id>
+    const runWorkflowMatch = text.match(/^\/run_workflow(?:@\S+)?\s+(\d+)\s*$/i);
+    if (runWorkflowMatch) {
+      const wfId = parseInt(runWorkflowMatch[1], 10);
+      const u = await this.usersService.findById(context.userId);
+      if (!u || u.level === UserLevel.CLIENT) {
+        return {
+          handled: true,
+          response: '❌ Chỉ owner và colleague mới có thể chạy workflow.',
+        };
+      }
+      try {
+        const { runId } = await this.taskWorkflowsService.enqueueRunForUser(wfId, context.userId);
+        return {
+          handled: true,
+          response: `✅ Đã enqueue workflow #${wfId}.\nRun ID: ${runId}\nKiểm tra tiến trình qua API: GET /task-workflows/runs/${runId}`,
+        };
+      } catch (e) {
+        return {
+          handled: true,
+          response: `❌ Lỗi khi chạy workflow: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    }
+
     return { handled: false };
   }
 
@@ -521,6 +584,8 @@ export class GatewayService {
     private readonly configService: ConfigService,
     private readonly stopAllService: StopAllService,
     private readonly usersService: UsersService,
+    private readonly tasksService: TasksService,
+    private readonly taskWorkflowsService: TaskWorkflowsService,
     @Optional() private readonly preferenceExtractor?: PreferenceExtractorService,
   ) {}
 

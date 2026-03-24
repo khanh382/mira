@@ -21,6 +21,8 @@ import { ChatModule } from '../modules/chat/chat.module';
 import { AgentModule } from '../agent/agent.module';
 import { OpenclawAgentsModule } from '../modules/openclaw-agents/openclaw-agents.module';
 import { LearningModule } from '../agent/learning/learning.module';
+import { TasksModule } from '../modules/tasks/tasks.module';
+import { TaskWorkflowsModule } from '../modules/task-workflows/task-workflows.module';
 
 import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
 
@@ -34,6 +36,8 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
     OpenclawAgentsModule,
     WorkspaceModule,
     LearningModule,
+    TasksModule,
+    TaskWorkflowsModule,
     TypeOrmModule.forFeature([BotUser]),
   ],
   controllers: [

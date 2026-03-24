@@ -15,6 +15,9 @@ import { GlobalConfigModule } from './modules/global-config/global-config.module
 import { OpenclawAgentsModule } from './modules/openclaw-agents/openclaw-agents.module';
 import { AgentWorkflowsModule } from './modules/agent-workflows/agent-workflows.module';
 import { HttpTokensModule } from './modules/http-tokens/http-tokens.module';
+import { TasksModule } from './modules/tasks/tasks.module';
+import { TaskWorkflowsModule } from './modules/task-workflows/task-workflows.module';
+import { CronJobsModule } from './modules/cron-jobs/cron-jobs.module';
 
 // Agent System
 import { AgentModule } from './agent/agent.module';
@@ -65,6 +68,9 @@ const getImports = () => {
       OpenclawAgentsModule,
       AgentWorkflowsModule,
       HttpTokensModule,
+      TasksModule,
+      TaskWorkflowsModule,
+      CronJobsModule,
     );
 
     console.log(
