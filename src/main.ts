@@ -15,6 +15,7 @@ async function bootstrap() {
 
   // Bọc mọi response thành công thành { statusCode, message, data }.
   app.useGlobalInterceptors(new ResponseInterceptor());
+  app.setGlobalPrefix('api/v1');
 
   const configService = app.get(ConfigService);
 

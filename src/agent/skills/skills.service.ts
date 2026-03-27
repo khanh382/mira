@@ -31,6 +31,23 @@ import type { ISkillResult } from './interfaces/skill-runner.interface';
 export class SkillsService implements OnModuleInit {
   private readonly logger = new Logger(SkillsService.name);
   private readonly codeRunners = new Map<string, ISkillRunner>();
+  private readonly skillAliases = new Map<
+    string,
+    { targetCode: string; injectParams?: Record<string, unknown> }
+  >([
+    ['google_gmail', { targetCode: 'google_workspace', injectParams: { service: 'gmail' } }],
+    ['google_drive', { targetCode: 'google_workspace', injectParams: { service: 'drive' } }],
+    ['google_docs', { targetCode: 'google_workspace', injectParams: { service: 'docs' } }],
+    ['google_sheets', { targetCode: 'google_workspace', injectParams: { service: 'sheets' } }],
+    ['google_slides', { targetCode: 'google_workspace', injectParams: { service: 'slides' } }],
+    ['google_calendar', { targetCode: 'google_workspace', injectParams: { service: 'calendar' } }],
+    ['google_contacts', { targetCode: 'google_workspace', injectParams: { service: 'contacts' } }],
+    ['google_tasks', { targetCode: 'google_workspace', injectParams: { service: 'tasks' } }],
+    ['google_forms', { targetCode: 'google_workspace', injectParams: { service: 'forms' } }],
+    ['google_chat', { targetCode: 'google_workspace', injectParams: { service: 'chat' } }],
+    ['google_keep', { targetCode: 'google_workspace', injectParams: { service: 'keep' } }],
+    ['google_pdf_read', { targetCode: 'google_workspace', injectParams: { service: 'drive' } }],
+  ]);
 
   constructor(
     @InjectRepository(Skill)
@@ -58,7 +75,11 @@ export class SkillsService implements OnModuleInit {
   }
 
   getRunner(skillCode: string): ISkillRunner | undefined {
-    return this.codeRunners.get(skillCode);
+    const direct = this.codeRunners.get(skillCode);
+    if (direct) return direct;
+    const alias = this.skillAliases.get(skillCode);
+    if (!alias) return undefined;
+    return this.codeRunners.get(alias.targetCode);
   }
 
   listCodeSkills(): ISkillDefinition[] {
@@ -114,6 +135,7 @@ export class SkillsService implements OnModuleInit {
     skillName: string;
     displayName: string | null;
     description: string;
+    sampleCode: string | null;
     category: string;
     minModelTier: string;
     ownerOnly: boolean;
@@ -127,7 +149,7 @@ export class SkillsService implements OnModuleInit {
     const showDisplayOnly = options?.displayOnly !== false;
 
     const defs = this.listCodeSkills();
-    return defs
+    const fromDefs = defs
       .filter((d) => !options?.ownerOnly || d.ownerOnly)
       .map((d) => {
         const row = dbMap.get(d.code);
@@ -136,6 +158,7 @@ export class SkillsService implements OnModuleInit {
           skillName: d.name,
           displayName: row?.displayName ?? null,
           description: d.description,
+          sampleCode: row?.sampleCode ?? null,
           category: d.category,
           minModelTier: d.minModelTier ?? 'cheap',
           ownerOnly: d.ownerOnly ?? false,
@@ -143,7 +166,27 @@ export class SkillsService implements OnModuleInit {
           isActive: true,
           isDisplay: row?.isDisplay ?? true,
         };
-      })
+      });
+
+    const defCodes = new Set(fromDefs.map((d) => d.skillCode));
+    const fromDbOnly = dbRows
+      .filter((r) => !defCodes.has(r.code))
+      .map((r) => ({
+        skillCode: r.code,
+        skillName: r.name,
+        displayName: r.displayName ?? null,
+        description: r.description ?? '',
+        sampleCode: r.sampleCode ?? null,
+        category: String(r.category),
+        minModelTier: String(r.minModelTier ?? 'cheap'),
+        ownerOnly: !!r.ownerOnly,
+        skillType: String(r.skillType ?? 'built_in'),
+        isActive: !!r.isActive,
+        isDisplay: !!r.isDisplay,
+      }));
+
+    return [...fromDefs, ...fromDbOnly]
+      .filter((d) => !options?.ownerOnly || d.ownerOnly)
       .filter((s) => !showDisplayOnly || s.isDisplay)
       .sort((a, b) => a.category.localeCompare(b.category) || a.skillCode.localeCompare(b.skillCode));
   }
@@ -182,6 +225,12 @@ export class SkillsService implements OnModuleInit {
     },
   ) {
     const start = Date.now();
+    const alias = this.skillAliases.get(skillCode);
+    const resolvedSkillCode = alias?.targetCode ?? skillCode;
+    const resolvedParameters = alias?.injectParams
+      ? { ...alias.injectParams, ...context.parameters }
+      : context.parameters;
+
     const user = await this.usersService.findById(context.userId);
     if (user?.level === UserLevel.CLIENT) {
       return {
@@ -195,7 +244,7 @@ export class SkillsService implements OnModuleInit {
 
     if (
       user?.level === UserLevel.COLLEAGUE &&
-      !isColleagueSafeTool(skillCode)
+      !isColleagueSafeTool(resolvedSkillCode)
     ) {
       return {
         success: false,
@@ -207,7 +256,7 @@ export class SkillsService implements OnModuleInit {
       };
     }
 
-    const runner = this.getRunner(skillCode);
+    const runner = this.getRunner(resolvedSkillCode);
     if (!runner) {
       throw new Error(
         `Skill "${skillCode}" not found or is a prompt-only skill`,
@@ -236,7 +285,7 @@ export class SkillsService implements OnModuleInit {
       signal.addEventListener('abort', onAbort, { once: true });
 
       runner
-        .execute({ ...context, signal })
+        .execute({ ...context, parameters: resolvedParameters, signal })
         .then((result) => {
           if (settled) return;
           settled = true;

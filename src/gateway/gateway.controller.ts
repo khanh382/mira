@@ -11,7 +11,11 @@ import {
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { GatewayService } from './gateway.service';
 import { SkillsService } from '../agent/skills/skills.service';
-import { SendMessageDto, ResetThreadDto } from './dto/send-message.dto';
+import {
+  SendMessageDto,
+  ResetThreadDto,
+  SwitchThreadDto,
+} from './dto/send-message.dto';
 import { ChatPlatform } from '../modules/chat/entities/chat-thread.entity';
 
 @Controller('gateway')
@@ -52,6 +56,21 @@ export class GatewayController {
       userId,
       limit ? parseInt(limit, 10) : 50,
     );
+  }
+
+  @Get('threads')
+  @UseGuards(JwtAuthGuard)
+  async listThreads(@Req() req: any) {
+    const userId = req.user.uid;
+    return this.gatewayService.listWebThreads(userId);
+  }
+
+  @Post('threads/switch')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  async switchThread(@Req() req: any, @Body() dto: SwitchThreadDto) {
+    const userId = req.user.uid;
+    return this.gatewayService.switchWebThread(userId, dto.threadId);
   }
 
   @Get('skills')

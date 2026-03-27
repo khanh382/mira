@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as fs from 'fs';
 import { RegisterSkill } from '../../decorators/skill.decorator';
 import {
   ISkillDefinition,
@@ -123,53 +122,13 @@ export class GoogleAuthSetupSkill implements ISkillRunner {
       // Ignore; fall back to normal flow below.
     }
 
-    // If email is not provided, infer from stored Google Console OAuth JSON.
     if (!email) {
-      const credPath = await this.gogCli.getCredentialsPathForUser(
-        context.userId,
-      );
-      if (!credPath) {
-        return {
-          success: false,
-          error:
-            'Missing parameter: email. Also cannot infer email from stored credentials JSON (bu_google_console_cloud_json_path not set or file missing).',
-          metadata: { durationMs: Date.now() - start },
-        };
-      }
-
-      let raw = '';
-      try {
-        raw = fs.readFileSync(credPath, 'utf-8');
-      } catch {
-        return {
-          success: false,
-          error: `Cannot read stored credentials file: ${credPath}`,
-          metadata: { durationMs: Date.now() - start },
-        };
-      }
-
-      try {
-        const parsed = JSON.parse(raw);
-        email =
-          parsed?.client_email ||
-          parsed?.service_account?.client_email ||
-          parsed?.email ||
-          parsed?.installed?.client_email ||
-          parsed?.web?.client_email ||
-          '';
-      } catch {
-        // ignore parse error, will fail below
-      }
-
-      email = String(email || '').trim();
-      if (!email) {
-        return {
-          success: false,
-          error:
-            'Missing parameter: email. Could not infer an email from the stored credentials JSON.',
-          metadata: { durationMs: Date.now() - start },
-        };
-      }
+      return {
+        success: false,
+        error:
+          'Missing parameter: email. (OAuth is now stored in database; email cannot be inferred from a file.)',
+        metadata: { durationMs: Date.now() - start },
+      };
     }
 
     let result: Awaited<ReturnType<typeof this.gogCli.setupCredentials>>;

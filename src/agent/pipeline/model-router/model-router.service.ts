@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { GlobalConfigService } from '../../../modules/global-config/global-config.service';
 import { UsersService } from '../../../modules/users/users.service';
 import { UserLevel } from '../../../modules/users/entities/user.entity';
+import { AgentFeedbackService } from '../../feedback/agent-feedback.service';
+import { ModelPolicyService } from '../../model-policy/model-policy.service';
 import {
   ModelTier,
   IntentType,
@@ -47,6 +49,8 @@ export class ModelRouterService {
     private readonly configService: ConfigService,
     private readonly globalConfigService: GlobalConfigService,
     private readonly usersService: UsersService,
+    private readonly feedback: AgentFeedbackService,
+    private readonly policy: ModelPolicyService,
   ) {}
 
   /**
@@ -121,6 +125,8 @@ export class ModelRouterService {
       skillTier?: ModelTier;
       forceModel?: string;
       dataSize?: number;
+      /** Optional hint: primary skill/tool expected for this request (from gateway tool hints). */
+      primarySkillHint?: string;
     },
   ): Promise<RoutingDecision> {
     await this.ensureInit();
@@ -137,7 +143,47 @@ export class ModelRouterService {
     const user = await this.usersService.findById(userId);
     const userLevel = user?.level ?? UserLevel.CLIENT;
 
-    const tier = this.determineTier(intent, userLevel, options);
+    let tier = this.determineTier(intent, userLevel, options);
+
+    // Global model policy (learned from owner feedback) — applies to all users.
+    try {
+      const applied = await this.policy.applyPolicyToTierAndModel({
+        intent: String(intent),
+        primarySkillHint: options?.primarySkillHint ?? null,
+        currentTier: tier,
+        currentModel: null,
+      });
+      if (applied?.tier && applied.tier !== tier) {
+        tier = applied.tier;
+      }
+      if (applied?.forceModel) {
+        return {
+          model: applied.forceModel,
+          tier,
+          reason: applied.reason ?? 'policy override',
+          fallback: false,
+        };
+      }
+    } catch {
+      /* best-effort */
+    }
+
+    // Adaptive routing (learn from user feedback / recent failures): only escalate, never auto-downgrade.
+    try {
+      const adapt = await this.feedback.shouldEscalateForIntent({
+        userId,
+        intent: String(intent),
+        currentTier: String(tier),
+      });
+      if (adapt.escalateToTier) {
+        const next = adapt.escalateToTier.toUpperCase() as ModelTier;
+        if (next !== tier) {
+          tier = next;
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
 
     if (userLevel !== UserLevel.OWNER && this.isHighTier(tier)) {
       this.logger.debug(

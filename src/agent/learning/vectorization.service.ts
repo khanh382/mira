@@ -18,6 +18,20 @@ export interface IEmbeddingResult {
   vector: number[];
 }
 
+/** Metadata gắn với mỗi vector (lọc khi search, không nhét full text vào đây). */
+export interface VectorRecordMeta {
+  source: 'chat_message';
+  schemaVersion: number;
+  embeddingModel: string;
+}
+
+export interface VectorSearchOptions {
+  maxResults?: number;
+  minScore?: number;
+  /** Chỉ lấy tin từ thread này (khuyến nghị cho inject semantic trong pipeline). */
+  threadId?: string;
+}
+
 /**
  * VectorizationService — Cronjob "Học để nhớ dai" (RAG pipeline).
  *
@@ -122,6 +136,7 @@ export class VectorizationService {
         content: m.content,
         vector: embeddings[i],
         createdAt: m.createdAt,
+        embeddingModel,
       })),
     );
 
@@ -236,6 +251,7 @@ export class VectorizationService {
       content: string;
       vector: number[];
       createdAt: Date;
+      embeddingModel: string;
     }>,
   ): Promise<void> {
     const vectorDir = this.getVectorDir();
@@ -249,6 +265,11 @@ export class VectorizationService {
       await fs.mkdir(userDir, { recursive: true });
 
       const filePath = path.join(userDir, `${entry.id}.json`);
+      const meta: VectorRecordMeta = {
+        source: 'chat_message',
+        schemaVersion: 1,
+        embeddingModel: entry.embeddingModel,
+      };
       await fs.writeFile(
         filePath,
         JSON.stringify({
@@ -259,6 +280,7 @@ export class VectorizationService {
           content: entry.content.slice(0, 2000),
           vector: entry.vector,
           createdAt: entry.createdAt.toISOString(),
+          meta,
         }),
       );
     }
@@ -271,7 +293,7 @@ export class VectorizationService {
   async search(
     userId: number,
     query: string,
-    options?: { maxResults?: number; minScore?: number },
+    options?: VectorSearchOptions,
   ): Promise<
     Array<{
       id: string;
@@ -279,10 +301,13 @@ export class VectorizationService {
       score: number;
       role: string;
       createdAt: string;
+      threadId?: string;
+      meta?: VectorRecordMeta;
     }>
   > {
     const maxResults = options?.maxResults ?? 5;
     const minScore = options?.minScore ?? 0.7;
+    const threadId = options?.threadId?.trim();
 
     const embeddingModel = await this.resolveEmbeddingModel();
     if (!embeddingModel) return [];
@@ -291,7 +316,11 @@ export class VectorizationService {
     if (!queryEmbedding?.[0]) return [];
 
     const queryVec = queryEmbedding[0];
-    const candidates = await this.loadUserVectors(userId);
+    let candidates = await this.loadUserVectors(userId);
+
+    if (threadId) {
+      candidates = candidates.filter((c) => c.threadId === threadId);
+    }
 
     const scored = candidates.map((c) => ({
       ...c,
@@ -308,10 +337,13 @@ export class VectorizationService {
   private async loadUserVectors(userId: number): Promise<
     Array<{
       id: string;
+      threadId?: string;
+      userId?: number;
       content: string;
       role: string;
       vector: number[];
       createdAt: string;
+      meta?: VectorRecordMeta;
     }>
   > {
     const fs = await import('fs');

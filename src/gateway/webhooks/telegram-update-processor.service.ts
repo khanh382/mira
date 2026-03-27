@@ -2,14 +2,19 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { BotAccessService } from '../../modules/bot-users/bot-access.service';
 import { BotDeliveryService } from '../../modules/bot-users/bot-delivery.service';
 import { BotPlatform } from '../../modules/bot-users/entities/bot-access-grant.entity';
 import { BotUsersService } from '../../modules/bot-users/bot-users.service';
 import { UsersService } from '../../modules/users/users.service';
+import { GoogleConnectionsService } from '../../modules/google-connections/google-connections.service';
 import { GatewayService } from '../gateway.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 import { ChatPlatform } from '../../modules/chat/entities/chat-thread.entity';
+import { Workflow, WorkflowStatus } from '../../agent/workflow/entities/workflow.entity';
+import { WorkflowNode } from '../../agent/workflow/entities/workflow-node.entity';
 
 function safeBasename(name: string | undefined, fallback: string): string {
   const base = path
@@ -88,7 +93,7 @@ export class TelegramUpdateProcessorService implements OnModuleDestroy {
    * messages and loop.
    */
   private readonly recentUpdateKeys = new Map<string, number>(); // key -> firstSeenAtMs
-  private readonly recentUpdateTtlMs = 5 * 60 * 1000; // 5 minutes
+  private readonly recentUpdateTtlMs = 24 * 60 * 60 * 1000; // 24 hours
   private readonly recentUpdateMaxSize = 3000;
 
   private isDuplicateUpdate(botToken: string, update: any): boolean {
@@ -121,7 +126,136 @@ export class TelegramUpdateProcessorService implements OnModuleDestroy {
     private readonly gatewayService: GatewayService,
     private readonly deliveryService: BotDeliveryService,
     private readonly workspaceService: WorkspaceService,
+    private readonly googleConnections: GoogleConnectionsService,
+    @InjectRepository(Workflow)
+    private readonly workflowRepo: Repository<Workflow>,
+    @InjectRepository(WorkflowNode)
+    private readonly workflowNodeRepo: Repository<WorkflowNode>,
   ) {}
+
+  private async sendTelegramInlineKeyboard(
+    botToken: string,
+    chatId: string | number,
+    text: string,
+    buttons: Array<Array<{ text: string; callback_data: string }>>,
+  ): Promise<boolean> {
+    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          reply_markup: { inline_keyboard: buttons },
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  private async answerTelegramCallbackQuery(
+    botToken: string,
+    callbackQueryId: string,
+    text?: string,
+  ): Promise<void> {
+    const url = `https://api.telegram.org/bot${botToken}/answerCallbackQuery`;
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          callback_query_id: callbackQueryId,
+          text,
+          show_alert: false,
+        }),
+      });
+    } catch {
+      // Ignore callback ack failures to keep main flow resilient.
+    }
+  }
+
+  private buildWorkflowHelpLine(workflow: Workflow): string {
+    return `Gọi nhanh trong chat: /run_workflow {"workflowCode":"${workflow.code}","input":{...}}`;
+  }
+
+  private async handleWorkflowsMenuCommand(
+    botToken: string,
+    ownerUid: number,
+    chatId: number,
+  ): Promise<boolean> {
+    const workflows = await this.workflowRepo.find({
+      where: { userId: ownerUid, status: WorkflowStatus.ACTIVE },
+      order: { updatedAt: 'DESC' },
+      take: 20,
+    });
+    if (!workflows.length) {
+      await this.deliveryService.sendTelegram(
+        botToken,
+        chatId,
+        'Hiện chưa có workflow active nào. Hãy bật active workflow trong giao diện trước.',
+      );
+      return true;
+    }
+
+    const lines = [
+      `Có ${workflows.length} workflow gần nhất. Bấm vào từng workflow để xem chi tiết:`,
+    ];
+    const buttons = workflows.map((wf) => [
+      {
+        text: `${wf.name}${wf.status ? ` [${wf.status}]` : ''}`,
+        callback_data: `wf:${wf.id}`,
+      },
+    ]);
+
+    await this.sendTelegramInlineKeyboard(botToken, chatId, lines.join('\n'), buttons);
+    return true;
+  }
+
+  private async handleWorkflowCallback(
+    botToken: string,
+    ownerUid: number,
+    chatId: number,
+    callbackData: string,
+  ): Promise<boolean> {
+    if (!callbackData.startsWith('wf:')) return false;
+    const workflowId = callbackData.slice(3).trim();
+    if (!workflowId) return false;
+
+    const workflow = await this.workflowRepo.findOne({
+      where: {
+        id: workflowId,
+        userId: ownerUid,
+        status: WorkflowStatus.ACTIVE,
+      },
+    });
+    if (!workflow) {
+      await this.deliveryService.sendTelegram(
+        botToken,
+        chatId,
+        'Workflow không tồn tại, không active, hoặc bạn không có quyền xem.',
+      );
+      return true;
+    }
+
+    const nodeCount = await this.workflowNodeRepo.count({
+      where: { workflowId: workflow.id },
+    });
+    const lines = [
+      `Workflow: ${workflow.name}`,
+      `Code: ${workflow.code}`,
+      `Status: ${workflow.status}`,
+      `Entry node: ${workflow.entryNodeId ?? '(chưa thiết lập)'}`,
+      `Nodes: ${nodeCount}`,
+      `Mô tả: ${workflow.description || '(trống)'}`,
+      '',
+      this.buildWorkflowHelpLine(workflow),
+    ];
+    await this.deliveryService.sendTelegram(botToken, chatId, lines.join('\n'));
+    return true;
+  }
 
   onModuleDestroy(): void {
     for (const t of this.mediaGroupTimers.values()) {
@@ -268,6 +402,40 @@ export class TelegramUpdateProcessorService implements OnModuleDestroy {
       return { ok: true };
     }
 
+    const callbackQuery = update?.callback_query;
+    if (callbackQuery?.from?.id && callbackQuery?.message?.chat?.id) {
+      const telegramUserId = String(callbackQuery.from.id);
+      const chatId = Number(callbackQuery.message.chat.id);
+      const callbackData = String(callbackQuery.data || '');
+
+      const { allowed, ownerUid } = await this.botAccessService.checkAccess(
+        botToken,
+        BotPlatform.TELEGRAM,
+        telegramUserId,
+      );
+      if (!allowed) {
+        await this.answerTelegramCallbackQuery(
+          botToken,
+          String(callbackQuery.id || ''),
+          'Bạn chưa được cấp quyền dùng bot này.',
+        );
+        return { ok: true };
+      }
+
+      const handledCallback = await this.handleWorkflowCallback(
+        botToken,
+        ownerUid,
+        chatId,
+        callbackData,
+      );
+      await this.answerTelegramCallbackQuery(
+        botToken,
+        String(callbackQuery.id || ''),
+        handledCallback ? 'Đã tải thông tin workflow.' : undefined,
+      );
+      return { ok: true };
+    }
+
     const message = update?.message;
     if (!message?.from) {
       return { ok: true };
@@ -317,6 +485,11 @@ export class TelegramUpdateProcessorService implements OnModuleDestroy {
     }
 
     await this.workspaceService.ensureUserWorkspace(owner.identifier);
+
+    if (/^\/workflows(?:@\S+)?$/i.test(textPart)) {
+      await this.handleWorkflowsMenuCommand(botToken, ownerUid, chatId);
+      return { ok: true };
+    }
 
     if (message.media_group_id != null) {
       const groupKey = `${botToken}\x1e${chatId}\x1e${String(message.media_group_id)}`;
@@ -492,33 +665,16 @@ export class TelegramUpdateProcessorService implements OnModuleDestroy {
       return { handled: false, message: '' };
     }
 
-    const workspaceDir =
-      this.workspaceService.getUserWorkspaceDir(ownerIdentifier);
-    const googleDir = path.join(workspaceDir, 'google');
-    fs.mkdirSync(googleDir, { recursive: true });
-    const targetPath = path.join(googleDir, 'console-cloud.json');
-
-    // Store shortened "brain-relative" path in DB so we don't persist absolute disk paths.
-    // Expected format (linux): /<identifier>/workspace/google/console-cloud.json
-    const brainDir = this.workspaceService.getBrainDir();
-    const relFromBrain = path.relative(brainDir, targetPath);
-    const dbPath = '/' + relFromBrain.split(path.sep).join('/');
-
-    // Single-file policy per user: always overwrite same destination file.
-    fs.writeFileSync(targetPath, raw);
-
-    await this.botUsersService.upsertGoogleCredentialsPath(
-      ownerUid,
-      dbPath,
-    );
+    await this.googleConnections.upsertConsoleCredentials({
+      userId: ownerUid,
+      consoleCredentialsJson: raw,
+    });
 
     return {
       handled: true,
       message:
-        '✅ Đã lưu Google Console JSON thành công.\n' +
-        `- File: ${targetPath}\n` +
-        '- DB: đã cập nhật `bu_google_console_cloud_json_path`.\n' +
-        '- Gửi lại file mới sẽ ghi đè file này (không tạo thêm bản mới).',
+        '✅ Đã lưu Google Console JSON thành công (lưu trong database).\n' +
+        '- Gửi lại file mới sẽ ghi đè bản cũ (mỗi user chỉ 1 kết nối Google).',
     };
   }
 }

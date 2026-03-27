@@ -23,7 +23,7 @@ export enum SkillCategory {
   MESSAGING = 'messaging',
   SESSIONS = 'sessions',
   FILESYSTEM = 'filesystem',
-  GOOGLE = 'google',
+  GOOGLE = 'google_workspace',
   CUSTOM = 'custom',
   CLAWHUB = 'clawhub',
 }

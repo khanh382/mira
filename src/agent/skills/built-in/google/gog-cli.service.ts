@@ -2,10 +2,12 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile, exec } from 'child_process';
 import { promisify } from 'util';
-import { existsSync, mkdirSync, chmodSync } from 'fs';
-import { join, resolve } from 'path';
-import { BotUsersService } from '../../../../modules/bot-users/bot-users.service';
-import { DEFAULT_BRAIN_DIR } from '../../../../config/brain-dir.config';
+import { chmodSync, existsSync, mkdirSync } from 'fs';
+import { promises as fsp } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { randomUUID } from 'crypto';
+import { GoogleConnectionsService } from '../../../../modules/google-connections/google-connections.service';
 
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
@@ -49,51 +51,15 @@ interface GogExecResult {
 export class GogCliService implements OnModuleInit {
   private readonly logger = new Logger(GogCliService.name);
   private gogBin: string;
-  private configDir: string;
   private ready = false;
-
-  private brainDirAbs(): string {
-    return resolve(this.configService.get('BRAIN_DIR', DEFAULT_BRAIN_DIR));
-  }
-
-  /**
-   * DB path policy:
-   * - New writes store brain-relative path: /<identifier>/workspace/google/console-cloud.json
-   * - Older rows may store absolute path: <brainDirAbs>/<identifier>/workspace/google/console-cloud.json
-   *
-   * This function always returns an absolute filesystem path.
-   */
-  private resolveBrainPath(storedPath: string): string {
-    const brainAbs = this.brainDirAbs().replace(/\\/g, '/');
-    const normalized = (storedPath || '').replace(/\\/g, '/').trim();
-    if (!normalized) return storedPath;
-
-    // Already absolute inside brainDir.
-    if (normalized.startsWith(brainAbs + '/')) return storedPath;
-
-    // New format: "/<identifier>/workspace/..."
-    const looksBrainRelative =
-      normalized.startsWith('/') && normalized.includes('/workspace/');
-    if (looksBrainRelative) {
-      return join(this.brainDirAbs(), normalized.slice(1));
-    }
-
-    // Fallback: treat as relative to brainDir.
-    return join(this.brainDirAbs(), normalized);
-  }
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly botUsersService: BotUsersService,
+    private readonly googleConnections: GoogleConnectionsService,
   ) {}
 
   async onModuleInit() {
     this.gogBin = this.configService.get('GOG_BIN', 'gog');
-    this.configDir = this.configService.get(
-      'GOG_CONFIG_DIR',
-      `${process.env.HOME}/.config/gogcli`,
-    );
-
     await this.ensureBinary();
   }
 
@@ -228,109 +194,129 @@ export class GogCliService implements OnModuleInit {
     return this.ready;
   }
 
-  async getAccountForUser(userId: number): Promise<string | null> {
-    const botUser = await this.botUsersService.findByUserId(userId);
-    if (!botUser?.googleConsoleCloudJsonPath) return null;
-
-    const credPath = this.resolveBrainPath(
-      botUser.googleConsoleCloudJsonPath,
-    );
-    if (!existsSync(credPath)) {
-      this.logger.warn(
-        `Google credentials file not found: ${credPath} (user ${userId})`,
+  private async withUserTempConfig<T>(
+    userId: number,
+    fn: (ctx: { env: Record<string, string>; credPath: string }) => Promise<T>,
+  ): Promise<T> {
+    const conn = await this.googleConnections.getByUserId(userId);
+    const consoleJson = conn?.consoleCredentialsJson?.trim() ?? '';
+    if (!consoleJson) {
+      throw new Error(
+        'Google Console credentials not configured for this user (stored in database).',
       );
-      return null;
     }
 
-    return this.configService.get(`GOG_ACCOUNT_USER_${userId}`, null);
-  }
+    const base = join(tmpdir(), 'mira-gog', `user_${userId}`, randomUUID());
+    const cfgDir = join(base, 'gogcli');
+    const credPath = join(base, 'console-cloud.json');
+    await fsp.mkdir(cfgDir, { recursive: true });
+    await fsp.writeFile(credPath, consoleJson, 'utf-8');
 
-  async getCredentialsPathForUser(userId: number): Promise<string | null> {
-    const botUser = await this.botUsersService.findByUserId(userId);
-    if (!botUser?.googleConsoleCloudJsonPath) return null;
-    const credPath = this.resolveBrainPath(
-      botUser.googleConsoleCloudJsonPath,
-    );
-    if (!existsSync(credPath)) return null;
-    return credPath;
+    // Restore gog state from DB into temp config dir.
+    if (conn?.gogState && typeof conn.gogState === 'object') {
+      for (const [rel, b64] of Object.entries(conn.gogState)) {
+        const safeRel = String(rel || '').replace(/^\/+/, '');
+        if (!safeRel) continue;
+        const abs = join(cfgDir, safeRel);
+        await fsp.mkdir(join(abs, '..'), { recursive: true });
+        const buf = Buffer.from(String(b64 || ''), 'base64');
+        await fsp.writeFile(abs, buf);
+      }
+    }
+
+    const env: Record<string, string> = {
+      ...process.env,
+      // Isolate gogcli state per user/run, DB is source of truth.
+      HOME: base,
+      XDG_CONFIG_HOME: base,
+      GOG_CONFIG_DIR: cfgDir,
+      GOG_KEYRING_BACKEND: 'file',
+      GOG_KEYRING_PASSWORD: this.configService.get(
+        'GOG_KEYRING_PASSWORD',
+        'mira_default_keyring',
+      ),
+      NO_COLOR: '1',
+    } as Record<string, string>;
+
+    try {
+      // Ensure credentials are installed in this temp state before running any command.
+      await this.rawExec(['auth', 'credentials', credPath, '--client', `user_${userId}`], 30000, env);
+      const out = await fn({ env, credPath });
+
+      // Persist gog state back into DB (all files under cfgDir).
+      const fileMap: Record<string, string> = {};
+      const walk = async (dir: string, prefix = ''): Promise<void> => {
+        const entries = await fsp.readdir(dir, { withFileTypes: true });
+        for (const e of entries) {
+          const abs = join(dir, e.name);
+          const rel = prefix ? `${prefix}/${e.name}` : e.name;
+          if (e.isDirectory()) {
+            await walk(abs, rel);
+          } else if (e.isFile()) {
+            const buf = await fsp.readFile(abs);
+            fileMap[rel] = buf.toString('base64');
+          }
+        }
+      };
+      await walk(cfgDir);
+      await this.googleConnections.updateGogState(userId, fileMap);
+
+      return out;
+    } finally {
+      try {
+        await fsp.rm(base, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
   }
 
   async setupCredentials(
     userId: number,
     email: string,
   ): Promise<GogExecResult> {
-    const botUser = await this.botUsersService.findByUserId(userId);
-    if (!botUser?.googleConsoleCloudJsonPath) {
-      return {
-        success: false,
-        error: 'Google Console Cloud JSON path not configured for this user',
-      };
-    }
-
-    const credPath = this.resolveBrainPath(
-      botUser.googleConsoleCloudJsonPath,
-    );
-    const credResult = await this.rawExec([
-      'auth',
-      'credentials',
-      credPath,
-      '--client',
-      `user_${userId}`,
-    ]);
-
-    if (!credResult.success) return credResult;
-
-    const addResult = await this.rawExec([
-      '--client',
-      `user_${userId}`,
-      'auth',
-      'add',
-      email,
-      '--services',
-      'user',
-      '--manual',
-    ]);
-
-    return addResult;
+    await this.googleConnections.updateGoogleEmail(userId, email);
+    return this.withUserTempConfig(userId, async ({ env }) => {
+      return this.rawExec(
+        [
+          '--client',
+          `user_${userId}`,
+          'auth',
+          'add',
+          email,
+          '--services',
+          'user',
+          '--manual',
+        ],
+        120000,
+        env,
+      );
+    });
   }
 
   async setupCredentialsRemoteStep1(
     userId: number,
     email: string,
   ): Promise<GogExecResult> {
-    const botUser = await this.botUsersService.findByUserId(userId);
-    if (!botUser?.googleConsoleCloudJsonPath) {
-      return {
-        success: false,
-        error: 'Google Console Cloud JSON path not configured for this user',
-      };
-    }
-
-    const credPath = this.resolveBrainPath(
-      botUser.googleConsoleCloudJsonPath,
-    );
-    const credResult = await this.rawExec([
-      'auth',
-      'credentials',
-      credPath,
-      '--client',
-      `user_${userId}`,
-    ]);
-    if (!credResult.success) return credResult;
-
-    // Remote Step 1: gog prints an authorization URL; user opens it and gets a redirect URL.
-    return this.rawExec([
-      '--client',
-      `user_${userId}`,
-      'auth',
-      'add',
-      email,
-      '--services',
-      'user',
-      '--remote',
-      '--step',
-      '1',
-    ]);
+    await this.googleConnections.updateGoogleEmail(userId, email);
+    return this.withUserTempConfig(userId, async ({ env }) => {
+      return this.rawExec(
+        [
+          '--client',
+          `user_${userId}`,
+          'auth',
+          'add',
+          email,
+          '--services',
+          'user',
+          '--remote',
+          '--step',
+          '1',
+        ],
+        120000,
+        env,
+      );
+    });
   }
 
   async setupCredentialsRemoteStep2(
@@ -338,42 +324,27 @@ export class GogCliService implements OnModuleInit {
     email: string,
     authUrl: string,
   ): Promise<GogExecResult> {
-    const botUser = await this.botUsersService.findByUserId(userId);
-    if (!botUser?.googleConsoleCloudJsonPath) {
-      return {
-        success: false,
-        error: 'Google Console Cloud JSON path not configured for this user',
-      };
-    }
-
-    const credPath = this.resolveBrainPath(
-      botUser.googleConsoleCloudJsonPath,
-    );
-    // Ensure client credentials are present before Step 2.
-    const credResult = await this.rawExec([
-      'auth',
-      'credentials',
-      credPath,
-      '--client',
-      `user_${userId}`,
-    ]);
-    if (!credResult.success) return credResult;
-
-    // Remote Step 2: paste the full redirect URL (loopback) from the browser.
-    return this.rawExec([
-      '--client',
-      `user_${userId}`,
-      'auth',
-      'add',
-      email,
-      '--services',
-      'user',
-      '--remote',
-      '--step',
-      '2',
-      '--auth-url',
-      authUrl,
-    ]);
+    await this.googleConnections.updateGoogleEmail(userId, email);
+    return this.withUserTempConfig(userId, async ({ env }) => {
+      return this.rawExec(
+        [
+          '--client',
+          `user_${userId}`,
+          'auth',
+          'add',
+          email,
+          '--services',
+          'user',
+          '--remote',
+          '--step',
+          '2',
+          '--auth-url',
+          authUrl,
+        ],
+        120000,
+        env,
+      );
+    });
   }
 
   async exec(options: GogExecOptions): Promise<GogExecResult> {
@@ -383,26 +354,22 @@ export class GogCliService implements OnModuleInit {
       return { success: false, error: 'gogcli binary not available' };
     }
 
-    const account = await this.getAccountForUser(userId);
+    return this.withUserTempConfig(userId, async ({ env }) => {
+      const conn = await this.googleConnections.getByUserId(userId);
+      const account = conn?.googleEmail?.trim() ? conn.googleEmail.trim() : null;
 
-    const fullArgs: string[] = ['--client', `user_${userId}`];
-
-    if (account) {
-      fullArgs.push('--account', account);
-    }
-
-    if (json) {
-      fullArgs.push('--json');
-    }
-
-    fullArgs.push(...args);
-
-    return this.rawExec(fullArgs, timeout);
+      const fullArgs: string[] = ['--client', `user_${userId}`];
+      if (account) fullArgs.push('--account', account);
+      if (json) fullArgs.push('--json');
+      fullArgs.push(...args);
+      return this.rawExec(fullArgs, timeout, env);
+    });
   }
 
   private async rawExec(
     args: string[],
     timeout = 30000,
+    envOverride?: Record<string, string>,
   ): Promise<GogExecResult> {
     try {
       this.logger.debug(`gog ${args.join(' ')}`);
@@ -411,13 +378,7 @@ export class GogCliService implements OnModuleInit {
         timeout,
         maxBuffer: 5 * 1024 * 1024,
         env: {
-          ...process.env,
-          GOG_KEYRING_BACKEND: 'file',
-          GOG_KEYRING_PASSWORD: this.configService.get(
-            'GOG_KEYRING_PASSWORD',
-            'mira_default_keyring',
-          ),
-          NO_COLOR: '1',
+          ...(envOverride ?? process.env),
         },
       });
 

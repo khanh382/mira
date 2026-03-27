@@ -90,6 +90,13 @@ export class ThreadsService {
     await this.threadRepo.update(threadId, { updatedAt: new Date() });
   }
 
+  async activate(threadId: string): Promise<void> {
+    await this.threadRepo.update(threadId, {
+      isActive: true,
+      updatedAt: new Date(),
+    });
+  }
+
   async setActiveOpenclawAgent(
     threadId: string,
     activeOpenclawAgentId: number | null,

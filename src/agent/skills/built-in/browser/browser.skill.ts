@@ -2628,7 +2628,14 @@ export class BrowserSkill implements ISkillRunner {
 
         case 'evaluate': {
           await this.ensureBrowser();
-          const result = await this.page.evaluate(script as string);
+          const rawScript = String(script ?? '').trim();
+          // Playwright evaluates a string as an expression; top-level `return` is a syntax error.
+          // Wrap “function-body-like” scripts into an IIFE so `return ...` works.
+          const wrapped =
+            /(^|\n)\s*return\b/.test(rawScript) || /;\s*return\b/.test(rawScript)
+              ? `(() => {\n${rawScript}\n})()`
+              : rawScript;
+          const result = await this.page.evaluate(wrapped);
           return {
             success: true,
             data: { result },

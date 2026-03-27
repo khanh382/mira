@@ -14,6 +14,8 @@ import { TelegramUpdateProcessorService } from './webhooks/telegram-update-proce
 import { TelegramFallbackPollingService } from './webhooks/telegram-fallback-polling.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BotUser } from '../modules/bot-users/entities/bot-user.entity';
+import { Workflow } from '../agent/workflow/entities/workflow.entity';
+import { WorkflowNode } from '../agent/workflow/entities/workflow-node.entity';
 
 import { UsersModule } from '../modules/users/users.module';
 import { BotUsersModule } from '../modules/bot-users/bot-users.module';
@@ -21,10 +23,15 @@ import { ChatModule } from '../modules/chat/chat.module';
 import { AgentModule } from '../agent/agent.module';
 import { OpenclawAgentsModule } from '../modules/openclaw-agents/openclaw-agents.module';
 import { LearningModule } from '../agent/learning/learning.module';
-import { TasksModule } from '../modules/tasks/tasks.module';
-import { TaskWorkflowsModule } from '../modules/task-workflows/task-workflows.module';
+import { N8nModule } from '../integrations/n8n/n8n.module';
+import { ChannelsModule } from '../agent/channels/channels.module';
+import { AgentFeedbackModule } from '../agent/feedback/agent-feedback.module';
+import { ModelPolicyModule } from '../agent/model-policy/model-policy.module';
+import { GlobalConfigModule } from '../modules/global-config/global-config.module';
+import { GoogleConnectionsModule } from '../modules/google-connections/google-connections.module';
 
 import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
+import { N8nCallbackController } from './webhooks/n8n-callback.controller';
 
 @Module({
   imports: [
@@ -36,15 +43,20 @@ import { WebChatGateway } from '../agent/channels/webchat/webchat.gateway';
     OpenclawAgentsModule,
     WorkspaceModule,
     LearningModule,
-    TasksModule,
-    TaskWorkflowsModule,
-    TypeOrmModule.forFeature([BotUser]),
+    N8nModule,
+    ChannelsModule,
+    AgentFeedbackModule,
+    ModelPolicyModule,
+    GlobalConfigModule,
+    GoogleConnectionsModule,
+    TypeOrmModule.forFeature([BotUser, Workflow, WorkflowNode]),
   ],
   controllers: [
     GatewayController,
     TelegramWebhookController,
     DiscordWebhookController,
     ZaloWebhookController,
+    N8nCallbackController,
   ],
   providers: [
     GatewayService,

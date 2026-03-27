@@ -71,7 +71,13 @@ export class RouteStep {
     const decision = await this.modelRouter.resolveModel(
       context.userId,
       intent,
-      { skillTier },
+      {
+        skillTier,
+        primarySkillHint:
+          Array.isArray(context.activeSkills) && context.activeSkills.length
+            ? String(context.activeSkills[0])
+            : undefined,
+      },
     );
 
     context.model = decision.model;

@@ -13,11 +13,9 @@ import { BotUsersModule } from './modules/bot-users/bot-users.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { GlobalConfigModule } from './modules/global-config/global-config.module';
 import { OpenclawAgentsModule } from './modules/openclaw-agents/openclaw-agents.module';
-import { AgentWorkflowsModule } from './modules/agent-workflows/agent-workflows.module';
 import { HttpTokensModule } from './modules/http-tokens/http-tokens.module';
-import { TasksModule } from './modules/tasks/tasks.module';
-import { TaskWorkflowsModule } from './modules/task-workflows/task-workflows.module';
-import { CronJobsModule } from './modules/cron-jobs/cron-jobs.module';
+import { N8nModule } from './integrations/n8n/n8n.module';
+import { N8nBrainModule } from './integrations/n8n/n8n-brain.module';
 
 // Agent System
 import { AgentModule } from './agent/agent.module';
@@ -66,11 +64,9 @@ const getImports = () => {
       ChatModule,
       GlobalConfigModule,
       OpenclawAgentsModule,
-      AgentWorkflowsModule,
       HttpTokensModule,
-      TasksModule,
-      TaskWorkflowsModule,
-      CronJobsModule,
+      N8nModule,
+      N8nBrainModule,
     );
 
     console.log(

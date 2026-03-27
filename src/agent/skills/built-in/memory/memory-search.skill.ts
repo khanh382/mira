@@ -24,6 +24,11 @@ const PARAMETERS_SCHEMA = {
       description: 'Minimum similarity score threshold (0-1)',
       default: 0.7,
     },
+    threadId: {
+      type: 'string',
+      description:
+        'If set, only search memories from this conversation thread. Omit to search across all threads for the user.',
+    },
   },
   required: ['query'],
 };
@@ -63,10 +68,12 @@ export class MemorySearchSkill implements ISkillRunner {
       query,
       maxResults = 5,
       minScore = 0.7,
+      threadId: paramThreadId,
     } = context.parameters as {
       query: string;
       maxResults?: number;
       minScore?: number;
+      threadId?: string;
     };
     const userId = context.userId;
 
@@ -81,9 +88,15 @@ export class MemorySearchSkill implements ISkillRunner {
     }
 
     try {
+      const threadId =
+        typeof paramThreadId === 'string' && paramThreadId.trim()
+          ? paramThreadId.trim()
+          : undefined;
+
       const results = await this.vectorization.search(userId, query, {
         maxResults,
         minScore,
+        ...(threadId ? { threadId } : {}),
       });
 
       if (results.length === 0) {
@@ -107,6 +120,7 @@ export class MemorySearchSkill implements ISkillRunner {
             role: r.role,
             score: Math.round(r.score * 1000) / 1000,
             date: r.createdAt,
+            threadId: r.threadId,
           })),
           totalFound: results.length,
         },

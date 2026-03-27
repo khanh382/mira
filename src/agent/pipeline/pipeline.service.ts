@@ -11,6 +11,7 @@ import { RouteStep } from './steps/route.step';
 import { AgentRunStep } from './steps/agent-run.step';
 import { DeliverStep } from './steps/deliver.step';
 import { StopAllService } from '../control/stop-all.service';
+import { AgentFeedbackService } from '../feedback/agent-feedback.service';
 
 @Injectable()
 export class PipelineService {
@@ -23,6 +24,7 @@ export class PipelineService {
     private readonly agentRunStep: AgentRunStep,
     private readonly deliverStep: DeliverStep,
     private readonly stopAllService: StopAllService,
+    private readonly feedback: AgentFeedbackService,
   ) {}
 
   async processMessage(
@@ -95,6 +97,14 @@ export class PipelineService {
     this.logger.log(
       `[${context.runId}] Pipeline ${context.stage} in ${durationMs}ms (tokens: ${context.tokensUsed ?? 0})`,
     );
+
+    try {
+      await this.feedback.recordPipelineRun(context);
+    } catch (e) {
+      this.logger.debug(
+        `[${context.runId}] Could not record agent run: ${(e as Error).message}`,
+      );
+    }
 
     return context;
   }

@@ -14,8 +14,10 @@ import { ChatService } from '../../../modules/chat/chat.service';
 import { UsersService } from '../../../modules/users/users.service';
 import { WorkspaceService } from '../../../gateway/workspace/workspace.service';
 import { SessionContextFocusService } from '../../../gateway/workspace/session-context-focus.service';
+import { GlobalConfigService } from '../../../modules/global-config/global-config.service';
 import { VectorizationService } from '../../learning/vectorization.service';
 import { PreferenceExtractorService } from '../../learning/preference-extractor.service';
+import { AgentFeedbackService } from '../../feedback/agent-feedback.service';
 
 const DEFAULT_HISTORY_LIMIT = 30;
 const MAX_HISTORY_LIMIT_CAP = 120;
@@ -30,6 +32,10 @@ const TOPIC_OVERLAP_RECENT_MESSAGES = 10;
 @Injectable()
 export class PreprocessStep {
   private readonly logger = new Logger(PreprocessStep.name);
+  private brandPersonaCache:
+    | { md: string; fetchedAtMs: number }
+    | { md: null; fetchedAtMs: number }
+    | null = null;
 
   constructor(
     private readonly hooksService: HooksService,
@@ -38,6 +44,8 @@ export class PreprocessStep {
     private readonly workspaceService: WorkspaceService,
     private readonly configService: ConfigService,
     private readonly sessionContextFocusService: SessionContextFocusService,
+    private readonly globalConfigService: GlobalConfigService,
+    private readonly feedback: AgentFeedbackService,
     @Optional() private readonly vectorizationService?: VectorizationService,
     @Optional() private readonly preferenceExtractor?: PreferenceExtractorService,
   ) {}
@@ -47,6 +55,7 @@ export class PreprocessStep {
 
     // ─── 1. Load system context from workspace files ──────
     await this.loadSystemContext(context);
+    await this.injectGlobalBrandPersona(context);
 
     // ─── 2. Load recent conversation history from DB ──────
     await this.loadConversationHistory(context);
@@ -60,7 +69,13 @@ export class PreprocessStep {
     // ─── 2d. Inject structured user preferences (DB) ──
     await this.injectUserPreferences(context);
 
+    // ─── 2e. Inject adaptive tool reliability hints (per-user, recent) ──
+    await this.injectUserToolReliabilityHints(context);
+
     await this.appendSessionFocusToSystemContext(context);
+
+    // ─── 2f. Final: enforce system prompt budget by priority ──
+    this.enforceSystemPromptBudget(context);
 
     // Gợi ý tool khi có file đính kèm (đường dẫn thường đã nằm trong content từ gateway)
     const hasLocalMedia =
@@ -124,6 +139,62 @@ export class PreprocessStep {
     return context;
   }
 
+  private enforceSystemPromptBudget(context: IPipelineContext): void {
+    const sysIdx = context.conversationHistory.findIndex((m) => m.role === 'system');
+    if (sysIdx < 0) return;
+    const maxChars = this.resolveSystemPromptMaxChars();
+    let content = String(context.conversationHistory[sysIdx]?.content ?? '');
+    if (!content) return;
+    if (content.length <= maxChars) return;
+
+    // Remove lowest-priority injected sections first.
+    const removals: Array<{ name: string; re: RegExp }> = [
+      {
+        name: 'semantic',
+        re: /\n## Ký ức liên quan[\s\S]*?(?=\n## |\n---\n|$)/,
+      },
+      {
+        name: 'tool-stats',
+        re: /\n## Thống kê tool gần đây[\s\S]*?(?=\n## |\n---\n|$)/,
+      },
+      {
+        name: 'prefs',
+        re: /\n## Sở thích người dùng[\s\S]*?(?=\n## |\n---\n|$)/,
+      },
+      {
+        name: 'session-focus',
+        re: /\n## Bối cảnh phiên[\s\S]*?(?=\n## |\n---\n|$)/,
+      },
+    ];
+
+    for (const r of removals) {
+      if (content.length <= maxChars) break;
+      content = content.replace(r.re, `\n<!-- trimmed:${r.name} -->`);
+    }
+
+    if (content.length > maxChars) {
+      // Hard trim: keep head + tail to preserve core rules and latest context.
+      const head = content.slice(0, Math.floor(maxChars * 0.6));
+      const tail = content.slice(-Math.floor(maxChars * 0.35));
+      content =
+        head +
+        `\n\n[...system context trimmed to fit budget (${maxChars} chars)...]\n\n` +
+        tail;
+    }
+
+    context.conversationHistory[sysIdx] = {
+      ...context.conversationHistory[sysIdx],
+      content,
+    };
+  }
+
+  private resolveSystemPromptMaxChars(): number {
+    const raw = this.configService.get<string>('SYSTEM_PROMPT_MAX_CHARS');
+    const n = raw !== undefined && raw !== '' ? Number(raw) : NaN;
+    if (!Number.isFinite(n) || n < 4000) return 18000;
+    return Math.min(Math.floor(n), 120000);
+  }
+
   /**
    * Đọc SOUL.md, USER.md, AGENTS.md, MEMORY.md, daily memory
    * từ workspace files → inject làm system message đầu tiên.
@@ -150,6 +221,51 @@ export class PreprocessStep {
     } catch (error) {
       this.logger.warn(
         `[${context.runId}] Failed to load system context: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Inject brand persona cấp hệ thống (global config) vào system prompt.
+   * Cache in-memory ngắn để tránh query DB mỗi tin nhắn.
+   */
+  private async injectGlobalBrandPersona(context: IPipelineContext): Promise<void> {
+    const sysIdx = context.conversationHistory.findIndex((m) => m.role === 'system');
+    if (sysIdx < 0) return;
+
+    const now = Date.now();
+    const TTL_MS = 60_000;
+    const cached = this.brandPersonaCache;
+    if (cached && now - cached.fetchedAtMs < TTL_MS) {
+      if (cached.md) {
+        context.conversationHistory[sysIdx] = {
+          ...context.conversationHistory[sysIdx],
+          content:
+            (context.conversationHistory[sysIdx].content ?? '') +
+            `\n\n## Persona hệ thống (brand voice — áp dụng toàn bộ hệ thống)\n` +
+            cached.md.trim(),
+        };
+      }
+      return;
+    }
+
+    try {
+      const cfg = await this.globalConfigService.getConfig();
+      const md = cfg?.brandPersonaMd?.trim() || null;
+      this.brandPersonaCache = { md, fetchedAtMs: now };
+      if (!md) return;
+
+      const injection = md.length > 3000 ? md.slice(0, 3000) + '…' : md;
+      context.conversationHistory[sysIdx] = {
+        ...context.conversationHistory[sysIdx],
+        content:
+          (context.conversationHistory[sysIdx].content ?? '') +
+          `\n\n## Persona hệ thống (brand voice — áp dụng toàn bộ hệ thống)\n` +
+          injection,
+      };
+    } catch (e) {
+      this.logger.debug(
+        `[${context.runId}] Brand persona inject skipped: ${(e as Error).message}`,
       );
     }
   }
@@ -292,9 +408,15 @@ export class PreprocessStep {
     try {
       const maxResults = 4;
       const minScore = 0.72;
+      const threadScoped =
+        this.configService.get<string>('SEMANTIC_SEARCH_THREAD_SCOPED') !==
+        'false';
       const results = await this.vectorizationService.search(userId, query, {
         maxResults,
         minScore,
+        ...(threadScoped && context.threadId
+          ? { threadId: context.threadId }
+          : {}),
       });
       if (!results.length) return;
 
@@ -412,6 +534,38 @@ export class PreprocessStep {
       this.logger.debug(
         `[${context.runId}] Preference inject skipped: ${(e as Error).message}`,
       );
+    }
+  }
+
+  private async injectUserToolReliabilityHints(
+    context: IPipelineContext,
+  ): Promise<void> {
+    const userId = context.userId;
+    if (!userId) return;
+
+    // Keep it cheap: do nothing if no system message.
+    const sysIdx = context.conversationHistory.findIndex(
+      (m) => m.role === 'system',
+    );
+    if (sysIdx < 0) return;
+
+    try {
+      const block = await this.feedback.getToolReliabilityHintBlock({
+        userId,
+        limit: 5,
+      });
+      if (!block?.trim()) return;
+
+      // Budget: keep this block short.
+      const injection = block.length > 900 ? block.slice(0, 900) + '…' : block;
+      context.conversationHistory[sysIdx] = {
+        ...context.conversationHistory[sysIdx],
+        content:
+          (context.conversationHistory[sysIdx].content ?? '') +
+          `\n\n${injection}`,
+      };
+    } catch {
+      /* best-effort */
     }
   }
 

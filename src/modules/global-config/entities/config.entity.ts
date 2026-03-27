@@ -5,6 +5,14 @@ export class Config {
   @PrimaryGeneratedColumn({ name: 'cof_id' })
   id: number;
 
+  // ─── Brand Persona (global) ──────────────────────────────────────────
+  /**
+   * Persona cấp hệ thống (brand voice) — inject vào system prompt cho mọi user/thread.
+   * Dùng để vận hành chatbot CSKH với giọng điệu nhất quán.
+   */
+  @Column({ name: 'cof_brand_persona_md', type: 'text', nullable: true })
+  brandPersonaMd: string | null;
+
   @Column({ name: 'cof_openai_api_key', nullable: true })
   openaiApiKey: string;
 

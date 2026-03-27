@@ -7,7 +7,7 @@ import { UserLevel } from '../users/entities/user.entity';
 
 @Injectable()
 export class GlobalConfigService {
-  private readonly maskedValue = '*************';
+  private readonly maskedValue = '*********************************************';
 
   constructor(
     @InjectRepository(Config)

@@ -73,4 +73,8 @@ export class UsersService {
     await this.userRepo.update(uid, data);
     return this.findById(uid);
   }
+
+  async listAll(): Promise<User[]> {
+    return this.userRepo.find({ order: { uid: 'ASC' } });
+  }
 }

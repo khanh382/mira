@@ -28,6 +28,12 @@ export const SYSTEM_BOT_MENU_ENTRIES: readonly BotMenuEntry[] = [
     discordDescription: 'Liệt kê agent system + OpenClaw (chủ bot)',
   },
   {
+    command: 'workflows',
+    telegramDescription:
+      'Hiển thị workflow hiện tại, bấm để xem mô tả và cách gọi',
+    discordDescription: 'Liệt kê workflow hiện có và hướng dẫn gọi',
+  },
+  {
     command: 'list_skills',
     telegramDescription:
       'Liệt kê mã tool code (@RegisterSkill) — không gồm gói $BRAIN_DIR/_shared/skills',
@@ -71,14 +77,9 @@ export const SYSTEM_BOT_MENU_ENTRIES: readonly BotMenuEntry[] = [
     discordDescription: 'Bật lại hệ thống (owner)',
   },
   {
-    command: 'run_task',
-    telegramDescription: '/run_task <id|code> — chạy task ngay (owner/colleague)',
-    discordDescription: 'Chạy task theo id hoặc code (owner/colleague)',
-  },
-  {
-    command: 'run_workflow',
-    telegramDescription: '/run_workflow <id> — chạy workflow ngay (owner/colleague)',
-    discordDescription: 'Chạy workflow theo id (owner/colleague)',
+    command: 'cron_manage',
+    telegramDescription: '/tool_cron_manage {"action":"add_n8n",...} — tạo lịch gọi workflow n8n (owner)',
+    discordDescription: 'Tạo lịch gọi workflow n8n (owner)',
   },
 ];
 
@@ -108,11 +109,11 @@ export function buildMenuHelpText(): string {
     '- /oa use <oa_id> — chọn OpenClaw; /oa new — phiên OpenClaw mới',
     '',
     'Khác:',
+    '- /workflows — xem danh sách workflow; (Telegram) có nút bấm xem chi tiết từng workflow',
     '- /brain_read [đường-dẫn] — thư mục: liệt kê con một cấp; file: nội dung. Bỏ trống = gốc user',
     '- /clean_media_incoming — xóa nội dung media/incoming (không nằm trong menu bot)',
     '- /list_tools — giống /list_skills (mã tool backend)',
-    '- /run_task <id|code> — enqueue task ngay (owner/colleague)',
-    '- /run_workflow <id> — enqueue workflow ngay (owner/colleague)',
+    '- /tool_cron_manage {"action":"add_n8n",...} — tạo lịch gọi workflow n8n (owner)',
     '- /run_skill <mã> <json hoặc key=value> — chạy gói trong $BRAIN_DIR/_shared/skills/',
     '- /delete_skill <mã> — xóa gói (owner)',
     '- /update_skill <mã> <json patch> — sửa skill.json (owner)',

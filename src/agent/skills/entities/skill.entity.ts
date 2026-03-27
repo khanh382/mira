@@ -30,6 +30,9 @@ export class Skill {
   @Column({ name: 'file_path', nullable: true })
   filePath: string | null;
 
+  @Column({ name: 'sample_code', type: 'varchar', nullable: true })
+  sampleCode: string | null;
+
   @Column({ name: 'parameters_schema', type: 'json', nullable: true })
   parametersSchema: Record<string, any>;
 

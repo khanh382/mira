@@ -61,23 +61,138 @@ VALUES
   false  -- ❌ ẩn: công cụ bảo trì nội bộ, không phải bước xử lý tự động
 ),
 
--- ─── GOOGLE ───────────────────────────────────────────────────────────────────
+-- ─── GOOGLE WORKSPACE ─────────────────────────────────────────────────────────
 (
   'google_workspace',
   'Google Workspace',
-  'Google Workspace (Drive/Sheets/Gmail…)',
-  'Tích hợp toàn diện Google Workspace: Gmail (đọc/gửi), Google Drive (tạo/tải/xóa file), Google Sheets (đọc/ghi dữ liệu), Google Docs, Google Calendar. Yêu cầu xác thực OAuth2 qua google_auth_setup.',
+  'Google Workspace (Docs/Sheets/Drive/Gmail)',
+  'Tích hợp Google Workspace qua gogcli. Ví dụ lệnh trong chat/command: ' ||
+  'Docs: service=docs, action="write <docId> --text ''<content>'' --append" hoặc "cat <docId>". ' ||
+  'Sheets: service=sheets, action="get <sheetId> A1:C10" hoặc "update <sheetId> A2:C2 1|Task|20%". ' ||
+  'Drive: service=drive, action="search ''name contains ''''report''''''" hoặc "upload /abs/path/file.pdf". ' ||
+  'Gmail: service=gmail, action="search ''newer_than:7d''" hoặc "send --to user@x.com --subject ''Hello'' --body ''...''". ' ||
+  'Calendar: service=calendar, action="events --today". Yêu cầu OAuth2 qua google_auth_setup.',
   'src/agent/skills/built-in/google/google-workspace.skill.ts',
-  'google', 'skill', false, true, 'built_in',
+  'google_workspace', 'skill', false, true, 'built_in',
   true   -- ✅ workflow: đọc/ghi Sheets, gửi Gmail, lưu Drive
+),
+(
+  'google_gmail',
+  'Google Gmail',
+  'Google Gmail',
+  'Alias UI cho google_workspace (service=gmail). Dùng cho tìm kiếm email, đọc thread, gửi email theo mẫu.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true   -- ✅ workflow/chat: ưu tiên thao tác email
+),
+(
+  'google_drive',
+  'Google Drive',
+  'Google Drive',
+  'Alias UI cho google_workspace (service=drive). Dùng cho các tác vụ thông dụng: search/upload/download/delete file Drive.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true   -- ✅ workflow/chat: chọn nhanh tác vụ Drive
+),
+(
+  'google_docs',
+  'Google Docs',
+  'Google Docs',
+  'Alias UI cho google_workspace (service=docs). Dùng cho create/read/write/append Google Docs.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true   -- ✅ workflow/chat: chọn nhanh tác vụ Docs
+),
+(
+  'google_sheets',
+  'Google Sheets',
+  'Google Sheets',
+  'Alias UI cho google_workspace (service=sheets). Dùng cho đọc/ghi vùng dữ liệu, tạo sheet, cập nhật bảng.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true   -- ✅ workflow/chat: chọn nhanh tác vụ Sheets
+),
+(
+  'google_slides',
+  'Google Slides',
+  'Google Slides',
+  'Alias UI cho google_workspace (service=slides). Dùng cho đọc/chỉnh sửa/tạo nội dung Google Slides theo lệnh gogcli.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true   -- ✅ workflow/chat: chọn nhanh tác vụ Slides
+),
+(
+  'google_calendar',
+  'Google Calendar',
+  'Google Calendar',
+  'Alias UI cho google_workspace (service=calendar). Dùng cho xem lịch, tạo sự kiện, kiểm tra freebusy.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true   -- ✅ workflow/chat: chọn nhanh tác vụ Calendar
+),
+(
+  'google_contacts',
+  'Google Contacts',
+  'Google Contacts',
+  'Alias UI cho google_workspace (service=contacts). Dùng cho liệt kê/tìm contact trong Google Contacts.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true
+),
+(
+  'google_tasks',
+  'Google Tasks',
+  'Google Tasks',
+  'Alias UI cho google_workspace (service=tasks). Dùng cho quản lý task list và các task cá nhân.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true
+),
+(
+  'google_forms',
+  'Google Forms',
+  'Google Forms',
+  'Alias UI cho google_workspace (service=forms). Dùng cho thao tác biểu mẫu và dữ liệu phản hồi cơ bản.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true
+),
+(
+  'google_chat',
+  'Google Chat',
+  'Google Chat',
+  'Alias UI cho google_workspace (service=chat). Dùng cho thao tác kênh/chat trong Google Chat.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true
+),
+(
+  'google_keep',
+  'Google Keep',
+  'Google Keep',
+  'Alias UI cho google_workspace (service=keep). Dùng cho ghi chú nhanh và quản lý note trong Google Keep.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true
+),
+(
+  'google_pdf_read',
+  'Google PDF Read',
+  'Google PDF (Drive) Read',
+  'Alias UI cho google_workspace (service=drive), ưu tiên các lệnh liên quan đọc/tải/xuất PDF từ Google Drive.',
+  'src/agent/skills/built-in/google/google-workspace.skill.ts',
+  'google_workspace', 'skill', false, true, 'built_in',
+  true   -- ✅ workflow/chat: đọc PDF qua Drive
 ),
 (
   'google_auth_setup',
   'Google Auth Setup',
   'Kết nối Google (xác thực OAuth2)',
-  'Thiết lập và quản lý xác thực OAuth2 với Google. Bước đầu tiên bắt buộc để dùng google_workspace. Tạo URL xác thực, lưu token, kiểm tra trạng thái kết nối.',
+  'Thiết lập OAuth2 cho user hiện tại (mỗi user 1 kết nối Google). Mode chat khuyến nghị: ' ||
+  'remote_step1 (lấy URL xác thực) -> remote_step2 (gửi authUrl callback) để hoàn tất. ' ||
+  'Sau khi xong, google_workspace dùng chung kết nối này.',
   'src/agent/skills/built-in/google/google-auth-setup.skill.ts',
-  'google', 'skill', false, true, 'built_in',
+  'google_workspace', 'skill', false, true, 'built_in',
   false  -- ❌ ẩn: bước setup một lần, không phải bước trong workflow tự động
 ),
 
@@ -240,3 +355,48 @@ ON CONFLICT (skill_code) DO UPDATE SET
   skill_type    = EXCLUDED.skill_type,
   is_display    = EXCLUDED.is_display,
   updated_at    = NOW();
+
+-- =============================================================================
+-- sample_code: ví dụ payload nhanh cho UI/chat (nullable)
+-- Gợi ý:
+-- - docs: read = "cat <docId>", write = "write <docId> --text \"...\" --append"
+-- - drive: read/search = "search <query>", delete = "delete <fileId>" (trash),
+--          xóa vĩnh viễn thêm --permanent
+-- - sheets: read = "get <sheetId> A1:C10", write = "update <sheetId> A2:C2 1|Task|20%"
+-- =============================================================================
+
+UPDATE skills_registry
+SET sample_code = '{"examples":[{"service":"docs","action":"write {input.fileId} --text \"{input.content}\" --append"},{"service":"docs","action":"cat {input.fileId}"},{"service":"docs","action":"clear {input.fileId}"}]}'
+WHERE skill_code = 'google_docs';
+
+UPDATE skills_registry
+SET sample_code = '{"examples":[{"service":"drive","action":"search \"name contains ''{input.keyword}''\""},{"service":"drive","action":"download {input.fileId}"},{"service":"drive","action":"delete {input.fileId}"}]}'
+WHERE skill_code = 'google_drive';
+
+UPDATE skills_registry
+SET sample_code = '{"examples":[{"service":"sheets","action":"get {input.sheetId} A1:C10"},{"service":"sheets","action":"update {input.sheetId} A2:C2 1|Task|20%"}]}'
+WHERE skill_code = 'google_sheets';
+
+UPDATE skills_registry
+SET sample_code = '{"service":"slides","action":"cat {input.fileId}"}'
+WHERE skill_code = 'google_slides';
+
+UPDATE skills_registry
+SET sample_code = '{"service":"calendar","action":"events --today"}'
+WHERE skill_code = 'google_calendar';
+
+UPDATE skills_registry
+SET sample_code = '{"examples":[{"service":"gmail","action":"search ''newer_than:7d''"},{"service":"gmail","action":"send --to {input.to} --subject \"{input.subject}\" --body \"{input.content}\""}]}'
+WHERE skill_code = 'google_gmail';
+
+UPDATE skills_registry
+SET sample_code = '{"service":"tasks","action":"lists"}'
+WHERE skill_code = 'google_tasks';
+
+UPDATE skills_registry
+SET sample_code = '{"service":"contacts","action":"search {input.name}"}'
+WHERE skill_code = 'google_contacts';
+
+UPDATE skills_registry
+SET sample_code = '{"service":"drive","action":"download {input.fileId}"}'
+WHERE skill_code = 'google_pdf_read';

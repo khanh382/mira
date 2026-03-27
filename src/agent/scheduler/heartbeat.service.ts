@@ -7,7 +7,7 @@ import {
   ScheduledTasksService,
   CreateTaskOptions,
 } from './scheduled-tasks.service';
-import { TaskSource } from './entities/scheduled-task.entity';
+import { ScheduledTargetType, TaskSource } from './entities/scheduled-task.entity';
 import { UsersService } from '../../modules/users/users.service';
 import { DEFAULT_BRAIN_DIR } from '../../config/brain-dir.config';
 
@@ -21,17 +21,14 @@ import { DEFAULT_BRAIN_DIR } from '../../config/brain-dir.config';
  * ```markdown
  * ## Kiểm tra email mới
  * - cron: 0 * / * * *        (mỗi giờ)
- * - prompt: Kiểm tra Gmail, nếu có email quan trọng thì báo tôi qua Telegram
- * - skills: google_workspace, message_send
- * - retries: 3
+ * - n8n: my_workflow_key
+ * - payload: {"foo":"bar"}     (optional JSON object)
+ * - notify: webchat            (optional: webchat|telegram|discord|zalo|slack)
+ * - notifyTargetId: <id>       (optional; required for non-webchat)
  *
  * ## Báo cáo hàng ngày
  * - cron: 0 7 * * *           (7h sáng mỗi ngày)
- * - prompt: Tạo báo cáo tổng hợp email + calendar hôm nay trên Google Sheet
- * - skills: google_workspace
- * - retries: 2
- * - tier: skill
- * - timeout: 180000
+ * - n8n: daily_report
  * ```
  *
  * Hệ thống sẽ tự tạo/cập nhật scheduled_tasks từ file này.
@@ -104,14 +101,24 @@ export class HeartbeatService implements OnModuleInit {
       if (existing) {
         if (
           existing.cronExpression !== parsed.cron ||
-          existing.agentPrompt !== parsed.prompt
+          existing.targetType !== ScheduledTargetType.N8N_WORKFLOW ||
+          existing.n8nWorkflowKey !== parsed.workflowKey ||
+          JSON.stringify(existing.n8nPayload ?? {}) !==
+            JSON.stringify(parsed.payload ?? {}) ||
+          (existing.notifyChannelId ?? null) !== (parsed.notifyChannelId ?? null) ||
+          (existing.notifyTargetId ?? null) !== (parsed.notifyTargetId ?? null)
         ) {
           await this.scheduledTasksService.update(existing.id, {
             cronExpression: parsed.cron,
-            agentPrompt: parsed.prompt,
-            allowedSkills: parsed.skills,
+            targetType: ScheduledTargetType.N8N_WORKFLOW,
+            agentPrompt: null,
+            n8nWorkflowKey: parsed.workflowKey,
+            n8nPayload: parsed.payload,
+            notifyChannelId: parsed.notifyChannelId,
+            notifyTargetId: parsed.notifyTargetId,
+            allowedSkills: null,
             maxRetries: parsed.retries,
-            maxModelTier: parsed.tier,
+            maxModelTier: null,
             timeoutMs: parsed.timeout,
           });
           this.logger.log(`Heartbeat updated: ${taskCode}`);
@@ -126,11 +133,16 @@ export class HeartbeatService implements OnModuleInit {
           name: parsed.name,
           description: `Heartbeat: ${parsed.name}`,
           cronExpression: parsed.cron,
-          agentPrompt: parsed.prompt,
-          allowedSkills: parsed.skills,
+          targetType: ScheduledTargetType.N8N_WORKFLOW,
+          agentPrompt: null,
+          n8nWorkflowKey: parsed.workflowKey,
+          n8nPayload: parsed.payload,
+          notifyChannelId: parsed.notifyChannelId,
+          notifyTargetId: parsed.notifyTargetId,
+          allowedSkills: null,
           source: TaskSource.HEARTBEAT,
           maxRetries: parsed.retries,
-          maxModelTier: parsed.tier,
+          maxModelTier: null,
           timeoutMs: parsed.timeout,
         });
         this.logger.log(
@@ -149,11 +161,12 @@ export class HeartbeatService implements OnModuleInit {
   private parseHeartbeatMd(content: string): Array<{
     name: string;
     cron: string;
-    prompt: string;
-    skills: string[] | null;
     retries: number;
-    tier: string | null;
     timeout: number;
+    workflowKey: string;
+    payload: Record<string, unknown> | null;
+    notifyChannelId: string | null;
+    notifyTargetId: string | null;
   }> {
     const tasks: any[] = [];
     const sections = content.split(/^##\s+/m).filter((s) => s.trim());
@@ -164,18 +177,29 @@ export class HeartbeatService implements OnModuleInit {
       if (!name) continue;
 
       const fields = this.extractFields(lines.slice(1));
-      if (!fields.cron || !fields.prompt) continue;
+      if (!fields.cron || !fields.n8n) continue;
+
+      let payload: Record<string, unknown> | null = null;
+      if (fields.payload) {
+        try {
+          const parsed = JSON.parse(fields.payload);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            payload = parsed as Record<string, unknown>;
+          }
+        } catch {
+          payload = null;
+        }
+      }
 
       tasks.push({
         name,
         cron: fields.cron,
-        prompt: fields.prompt,
-        skills: fields.skills
-          ? fields.skills.split(',').map((s) => s.trim())
-          : null,
         retries: fields.retries ? parseInt(fields.retries, 10) : 3,
-        tier: fields.tier ?? null,
         timeout: fields.timeout ? parseInt(fields.timeout, 10) : 120000,
+        workflowKey: fields.n8n.trim(),
+        payload,
+        notifyChannelId: fields.notify ? fields.notify.trim() : null,
+        notifyTargetId: fields.notifytargetid ? fields.notifytargetid.trim() : null,
       });
     }
 

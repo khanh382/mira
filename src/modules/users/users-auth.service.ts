@@ -645,6 +645,22 @@ export class UsersAuthService {
     };
   }
 
+  async listUsersByOwner(ownerUid: number) {
+    const owner = await this.usersService.findById(ownerUid);
+    if (!owner || owner.status === UserStatus.BLOCK) {
+      throw new UnauthorizedException('Invalid request');
+    }
+    if (owner.level !== UserLevel.OWNER) {
+      throw new ForbiddenException('Only owner can view users list');
+    }
+
+    const users = await this.usersService.listAll();
+    return {
+      items: users.map((u) => this.toPublicUser(u)),
+      total: users.length,
+    };
+  }
+
   logout(res: Response) {
     this.clearAuthCookies(res);
     return { ok: true };

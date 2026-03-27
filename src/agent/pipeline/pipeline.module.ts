@@ -14,6 +14,8 @@ import { UsersModule } from '../../modules/users/users.module';
 import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
 import { ControlModule } from '../control/control.module';
 import { LearningModule } from '../learning/learning.module';
+import { AgentFeedbackModule } from '../feedback/agent-feedback.module';
+import { GlobalConfigModule } from '../../modules/global-config/global-config.module';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { LearningModule } from '../learning/learning.module';
     WorkspaceModule,
     ControlModule,
     LearningModule,
+    AgentFeedbackModule,
+    GlobalConfigModule,
   ],
   providers: [
     PipelineService,

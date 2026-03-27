@@ -134,4 +134,10 @@ export class UsersController {
     }
     return this.usersAuthService.toPublicUser(user);
   }
+
+  @Get('list')
+  @UseGuards(JwtAuthGuard)
+  async listUsers(@Req() req: { user: { uid: number } }) {
+    return this.usersAuthService.listUsersByOwner(req.user.uid);
+  }
 }

@@ -21,6 +21,13 @@ export enum TaskSource {
   MANUAL = 'manual',
 }
 
+export enum ScheduledTargetType {
+  /** Legacy: run through agent pipeline using agentPrompt. */
+  AGENT_PROMPT = 'agent_prompt',
+  /** New: dispatch hidden n8n workflow directly (no LLM needed). */
+  N8N_WORKFLOW = 'n8n_workflow',
+}
+
 @Entity('scheduled_tasks')
 export class ScheduledTask {
   @PrimaryGeneratedColumn({ name: 'task_id' })
@@ -45,9 +52,32 @@ export class ScheduledTask {
   @Column({ name: 'cron_expression' })
   cronExpression: string;
 
-  /** Prompt gửi cho agent khi task chạy (thay vì hardcode logic) */
-  @Column({ name: 'agent_prompt', type: 'text' })
-  agentPrompt: string;
+  @Column({
+    name: 'target_type',
+    type: 'enum',
+    enum: ScheduledTargetType,
+    default: ScheduledTargetType.N8N_WORKFLOW,
+  })
+  targetType: ScheduledTargetType;
+
+  /** Prompt gửi cho agent khi task chạy (legacy path). */
+  @Column({ name: 'agent_prompt', type: 'text', nullable: true })
+  agentPrompt: string | null;
+
+  /** n8n workflow key to dispatch (required when targetType=n8n_workflow). */
+  @Column({ name: 'n8n_workflow_key', type: 'varchar', length: 120, nullable: true })
+  n8nWorkflowKey: string | null;
+
+  /** Payload template snapshot (no secrets). */
+  @Column({ name: 'n8n_payload', type: 'jsonb', nullable: true })
+  n8nPayload: Record<string, unknown> | null;
+
+  /** Notify on completion (optional). */
+  @Column({ name: 'notify_channel_id', type: 'varchar', length: 20, nullable: true })
+  notifyChannelId: string | null;
+
+  @Column({ name: 'notify_target_id', type: 'varchar', length: 180, nullable: true })
+  notifyTargetId: string | null;
 
   /** Danh sách skill codes được phép dùng (null = tất cả) */
   @Column({ name: 'allowed_skills', type: 'json', nullable: true })

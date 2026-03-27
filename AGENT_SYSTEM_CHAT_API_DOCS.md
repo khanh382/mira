@@ -149,7 +149,82 @@ Tai lieu mo ta chi tiet API va WebSocket khi frontend chat voi **agent system** 
 
 ---
 
-### 4) Skills va status (ho tro UI)
+### 4) Lay danh sach thread web (session picker)
+
+`GET /gateway/threads`
+
+#### Auth
+
+- JWT bat buoc
+
+#### Response example
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "items": [
+      {
+        "threadId": "8c5f2d6b-...",
+        "title": null,
+        "isActive": true,
+        "activeOpenclawAgentId": null,
+        "createdAt": "2026-03-24T11:00:00.000Z",
+        "updatedAt": "2026-03-24T11:10:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 5) Chuyen thread active (switch session)
+
+`POST /gateway/threads/switch`
+
+#### Auth
+
+- JWT bat buoc
+
+#### Body
+
+```json
+{
+  "threadId": "8c5f2d6b-..."
+}
+```
+
+#### Rules
+
+- Chi switch thread `platform=web`
+- Thread phai thuoc user dang login
+- Sau khi switch, `POST /gateway/message` (khong truyen `threadId`) se mac dinh vao thread moi
+
+#### Response example
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "threadId": "8c5f2d6b-...",
+    "isActive": true,
+    "activeOpenclawAgentId": null,
+    "message": "Switched active thread to 8c5f2d6b-..."
+  }
+}
+```
+
+#### Loi thuong gap
+
+- `404`: thread khong ton tai hoac khong thuoc user
+- `400`: thread khong phai web
+
+---
+
+### 6) Skills va status (ho tro UI)
 
 - `GET /gateway/skills` (public)
 - `GET /gateway/skill-catalog` (JWT)

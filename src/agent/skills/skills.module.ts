@@ -25,6 +25,7 @@ import { BotAccessManageSkill } from './built-in/messaging/bot-access-manage.ski
 import { SessionsListSkill } from './built-in/sessions/sessions-list.skill';
 import { SessionsHistorySkill } from './built-in/sessions/sessions-history.skill';
 import { FileReadSkill } from './built-in/filesystem/file-read.skill';
+import { N8nDispatchSkill } from './built-in/integrations/n8n-dispatch.skill';
 
 import { ChatModule } from '../../modules/chat/chat.module';
 import { UsersModule } from '../../modules/users/users.module';
@@ -35,6 +36,7 @@ import { WorkspaceModule } from '../../gateway/workspace/workspace.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { BotUsersModule } from '../../modules/bot-users/bot-users.module';
 import { HttpTokensModule } from '../../modules/http-tokens/http-tokens.module';
+import { N8nModule } from '../../integrations/n8n/n8n.module';
 
 @Module({
   imports: [
@@ -49,6 +51,7 @@ import { HttpTokensModule } from '../../modules/http-tokens/http-tokens.module';
     ChannelsModule,
     BotUsersModule,
     HttpTokensModule,
+    N8nModule,
     forwardRef(() => SchedulerModule),
   ],
   providers: [
@@ -73,6 +76,7 @@ import { HttpTokensModule } from '../../modules/http-tokens/http-tokens.module';
     SessionsListSkill,
     SessionsHistorySkill,
     FileReadSkill,
+    N8nDispatchSkill,
   ],
   exports: [SkillsService],
 })

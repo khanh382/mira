@@ -11,3 +11,7 @@ export class SendMessageDto {
 export class ResetThreadDto {
   reason?: string;
 }
+
+export class SwitchThreadDto {
+  threadId: string;
+}

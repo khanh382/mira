@@ -6,6 +6,7 @@ import { SkillsModule } from './skills/skills.module';
 import { PipelineModule } from './pipeline/pipeline.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { LearningModule } from './learning/learning.module';
+import { WorkflowModule } from './workflow/workflow.module';
 import { GlobalConfigModule } from '../modules/global-config/global-config.module';
 import { AgentService } from './agent.service';
 import { AgentController } from './agent.controller';
@@ -36,6 +37,7 @@ import { LmStudioProvider } from './providers/local-llm/lmstudio.provider';
     PipelineModule,
     SchedulerModule,
     LearningModule,
+    WorkflowModule,
     GlobalConfigModule,
     ControlModule,
   ],

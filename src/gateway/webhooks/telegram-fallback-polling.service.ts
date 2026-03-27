@@ -38,7 +38,7 @@ export class TelegramFallbackPollingService implements OnModuleInit {
       ?.replace(/\/+$/, '');
 
     for (const token of tokens) {
-      const desired = baseUrl ? `${baseUrl}/webhooks/telegram/${token}` : '';
+      const desired = baseUrl ? `${baseUrl}/api/v1/webhooks/telegram/${token}` : '';
       let webhookHealthy = false;
 
       if (desired) {
@@ -54,6 +54,7 @@ export class TelegramFallbackPollingService implements OnModuleInit {
           const setOk = await this.deliveryService.setTelegramWebhook(
             token,
             desired,
+            { dropPendingUpdates: true },
           );
           webhookHealthy = setOk;
         }
@@ -70,7 +71,8 @@ export class TelegramFallbackPollingService implements OnModuleInit {
       }
 
       if (this.modes.get(token) !== 'polling') {
-        await this.deliveryService.deleteTelegramWebhook(token, false);
+        // Drop backlog when switching to polling to avoid replying to old messages.
+        await this.deliveryService.deleteTelegramWebhook(token, true);
         this.logger.warn(
           `Telegram token ${token.slice(0, 8)}... switched to POLLING fallback mode`,
         );

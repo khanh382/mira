@@ -5,6 +5,8 @@ import { BotUser } from './entities/bot-user.entity';
 
 @Injectable()
 export class BotUsersService {
+  private static readonly MASKED_TOKEN = '*********************************************';
+
   constructor(
     @InjectRepository(BotUser)
     private readonly botUserRepo: Repository<BotUser>,
@@ -33,23 +35,19 @@ export class BotUsersService {
   }
 
   toPublicRecord(row: BotUser) {
+    const mask = (value?: string | null): string | null => {
+      const v = String(value ?? '').trim();
+      return v.length > 0 ? BotUsersService.MASKED_TOKEN : null;
+    };
     return {
       id: row.id,
       userId: row.userId,
-      telegramBotToken: row.telegramBotToken ?? null,
-      discordBotToken: row.discordBotToken ?? null,
-      slackBotToken: row.slackBotToken ?? null,
-      zaloBotToken: row.zaloBotToken ?? null,
-      googleConsoleCloudJsonPath: row.googleConsoleCloudJsonPath ?? null,
+      telegramBotToken: mask(row.telegramBotToken),
+      discordBotToken: mask(row.discordBotToken),
+      slackBotToken: mask(row.slackBotToken),
+      zaloBotToken: mask(row.zaloBotToken),
       createdAt: row.createdAt,
       updateAt: row.updateAt,
     };
-  }
-
-  async upsertGoogleCredentialsPath(
-    userId: number,
-    googleConsoleCloudJsonPath: string,
-  ): Promise<BotUser> {
-    return this.upsertByUserId(userId, { googleConsoleCloudJsonPath });
   }
 }

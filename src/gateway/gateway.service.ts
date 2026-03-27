@@ -1,4 +1,5 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
   ThreadResolverService,
   ResolvedThread,
@@ -19,11 +20,18 @@ import { UsersService } from '../modules/users/users.service';
 import { ThreadsService } from '../modules/chat/threads.service';
 import { OpenclawChatService } from '../modules/openclaw-agents/openclaw-chat.service';
 import { PreferenceExtractorService } from '../agent/learning/preference-extractor.service';
+import { AgentFeedbackService } from '../agent/feedback/agent-feedback.service';
+import { AgentRunOutcome } from '../agent/feedback/entities/agent-run.entity';
+import { ModelPolicyService } from '../agent/model-policy/model-policy.service';
+import { GlobalConfigService } from '../modules/global-config/global-config.service';
 import { createHash } from 'crypto';
 import { buildMenuHelpText } from '../modules/bot-users/bot-platform-menu';
 import { sanitizeLlmDisplayLeakage } from '../modules/bot-users/llm-output-sanitize';
-import { TasksService } from '../modules/tasks/tasks.service';
-import { TaskWorkflowsService } from '../modules/task-workflows/task-workflows.service';
+import { InteractionMemoryService } from '../agent/learning/interaction-memory.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Workflow, WorkflowStatus } from '../agent/workflow/entities/workflow.entity';
+import { WorkflowNode } from '../agent/workflow/entities/workflow-node.entity';
 
 /**
  * GatewayService — trung tâm điều phối giữa entry points và agent pipeline.
@@ -115,6 +123,8 @@ export class GatewayService {
     'brain_read',
     'oa',
     'agents',
+    'workflows',
+    'cron_manage',
   ]);
 
   private parseSimpleParams(input: string): Record<string, unknown> {
@@ -223,6 +233,27 @@ export class GatewayService {
     );
   }
 
+  private buildWorkflowListText(
+    workflows: Workflow[],
+    nodeCountMap: Map<string, number>,
+  ): string {
+    const lines: string[] = [];
+    lines.push(`Workflow active hiện có (${workflows.length}):`);
+    lines.push('');
+    for (const wf of workflows) {
+      lines.push(`- ${wf.name}`);
+      lines.push(`  code: ${wf.code}`);
+      lines.push(`  status: ${wf.status}`);
+      lines.push(`  nodes: ${nodeCountMap.get(wf.id) ?? 0}`);
+      lines.push(`  mô tả: ${wf.description?.trim() || '(trống)'}`);
+      lines.push(
+        `  gọi nhanh: /run_workflow {"workflowCode":"${wf.code}","input":{...}}`,
+      );
+      lines.push('');
+    }
+    return lines.join('\n').trim();
+  }
+
   private async persistAssistantReply(
     user: { uid: number; identifier: string },
     threadId: string,
@@ -246,6 +277,13 @@ export class GatewayService {
       tokensUsed,
     });
     this.sessionContextFocusService.scheduleRefreshAfterAssistantMessage({
+      userId: user.uid,
+      identifier: user.identifier,
+      threadId,
+    });
+
+    // Auto long-term memory extraction from interaction (no commands required).
+    this.interactionMemoryService?.scheduleAfterAssistantMessage({
       userId: user.uid,
       identifier: user.identifier,
       threadId,
@@ -295,6 +333,185 @@ export class GatewayService {
 
     if (/^\/menu(?:@\S+)?$/i.test(text)) {
       return { handled: true, response: buildMenuHelpText() };
+    }
+
+    if (/^\/workflows(?:@\S+)?$/i.test(text)) {
+      const workflows = await this.workflowRepo.find({
+        where: { userId: context.userId, status: WorkflowStatus.ACTIVE },
+        order: { updatedAt: 'DESC' },
+        take: 20,
+      });
+      if (!workflows.length) {
+        return {
+          handled: true,
+          response:
+            'Hiện chưa có workflow active nào. Hãy bật active workflow trong giao diện trước.',
+        };
+      }
+
+      const workflowIds = workflows.map((w) => w.id);
+      const nodeCounts = await this.workflowNodeRepo
+        .createQueryBuilder('n')
+        .select('n.workflowId', 'workflowId')
+        .addSelect('COUNT(*)', 'count')
+        .where('n.workflowId IN (:...ids)', { ids: workflowIds })
+        .groupBy('n.workflowId')
+        .getRawMany<{ workflowId: string; count: string }>();
+      const nodeCountMap = new Map<string, number>();
+      for (const row of nodeCounts) {
+        nodeCountMap.set(row.workflowId, Number(row.count || 0));
+      }
+
+      return {
+        handled: true,
+        response: this.buildWorkflowListText(workflows, nodeCountMap),
+      };
+    }
+
+    // Global brand persona commands (owner-only)
+    // - /persona_show
+    // - /persona_set <markdown/text...>
+    // - /persona_clear
+    if (/^\/persona_show(?:@\S+)?$/i.test(text)) {
+      await this.globalConfigService.assertOwner(context.userId);
+      const cfg = await this.globalConfigService.getConfig();
+      const md = cfg?.brandPersonaMd?.trim() || '';
+      return {
+        handled: true,
+        response: md
+          ? `Persona hiện tại (global):\n\n${md}`
+          : 'Persona hiện tại (global): (trống). Dùng `/persona_set ...` để thiết lập.',
+      };
+    }
+
+    const personaSetMatch = text.match(/^\/persona_set(?:@\S+)?(?:\s+([\s\S]*))$/i);
+    if (personaSetMatch) {
+      await this.globalConfigService.assertOwner(context.userId);
+      const md = (personaSetMatch[1] ?? '').trim();
+      if (!md) {
+        return {
+          handled: true,
+          response: '❌ Thiếu nội dung persona. Ví dụ: `/persona_set Bạn là CSKH...`',
+        };
+      }
+      await this.globalConfigService.updateConfig({ brandPersonaMd: md });
+      return {
+        handled: true,
+        response: `✅ Đã cập nhật persona (global). (length=${md.length} chars)`,
+      };
+    }
+
+    if (/^\/persona_clear(?:@\S+)?$/i.test(text)) {
+      await this.globalConfigService.assertOwner(context.userId);
+      await this.globalConfigService.updateConfig({ brandPersonaMd: null });
+      return { handled: true, response: '✅ Đã xóa persona (global).' };
+    }
+
+    // Feedback loop (learning): user can explicitly mark the last run as OK/BAD.
+    // - /ok [note]
+    // - /fail [note]
+    // - Telegram suffix: /ok@BotName
+    if (
+      /^\/ok(?:@\S+)?(?:\s|$)/i.test(text) ||
+      /^\/done(?:@\S+)?(?:\s|$)/i.test(text)
+    ) {
+      const note = text.replace(/^\/(?:ok|done)(?:@\S+)?/i, '').trim();
+      const r = await this.agentFeedback.markLastRunOutcome({
+        userId: context.userId,
+        threadId: context.threadId,
+        outcome: AgentRunOutcome.OK,
+        feedbackText: note || null,
+      });
+      if (r.ok === false) return { handled: true, response: `❌ ${r.error}` };
+      return {
+        handled: true,
+        response: `✅ Đã ghi nhận: OK (runId=${r.runId.slice(0, 8)}…).`,
+      };
+    }
+
+    if (
+      /^\/fail(?:@\S+)?(?:\s|$)/i.test(text) ||
+      /^\/bad(?:@\S+)?(?:\s|$)/i.test(text)
+    ) {
+      const note = text.replace(/^\/(?:fail|bad)(?:@\S+)?/i, '').trim();
+      const r = await this.agentFeedback.markLastRunOutcome({
+        userId: context.userId,
+        threadId: context.threadId,
+        outcome: AgentRunOutcome.BAD,
+        feedbackText: note || null,
+      });
+      if (r.ok === false) return { handled: true, response: `❌ ${r.error}` };
+      const reason = note ? ` Lý do: ${note}` : '';
+      return {
+        handled: true,
+        response: `📝 Đã ghi nhận: FAIL (runId=${r.runId.slice(0, 8)}…).${reason}`,
+      };
+    }
+
+    // Owner-only: retry last non-command user message with an alternative model.
+    if (/^\/retry(?:@\S+)?(?:\s|$)/i.test(text)) {
+      const u = await this.usersService.findById(context.userId);
+      if (u?.level !== UserLevel.OWNER) {
+        return { handled: true, response: '⛔ Chỉ owner mới có quyền dùng /retry.' };
+      }
+
+      // Find last user message that isn't a command.
+      const recent = await this.chatService.findByThreadId(context.threadId, 30);
+      const lastUser = [...recent]
+        .slice()
+        .reverse()
+        .find(
+          (m) =>
+            m.role === MessageRole.USER &&
+            typeof m.content === 'string' &&
+            m.content.trim() &&
+            !m.content.trim().startsWith('/'),
+        );
+      if (!lastUser?.content) {
+        return { handled: true, response: '❌ Không tìm thấy tin nhắn user gần đây để retry.' };
+      }
+
+      // Choose a different model based on the most recent agent run in this thread.
+      const run = await this.agentFeedback.getLatestRunForThread({
+        userId: context.userId,
+        threadId: context.threadId,
+      });
+
+      const retryPick = run
+        ? this.modelPolicy.chooseRetryModel({
+            currentTier: run.tier ?? null,
+            currentModel: run.model ?? null,
+          })
+        : null;
+
+      const forceModel =
+        retryPick?.model ??
+        this.configService.get('DEFAULT_MODEL', 'openai/gpt-4o');
+
+      const inferredChannelId = context.actorTelegramId ? 'telegram' : 'webchat';
+      const inbound: IInboundMessage = {
+        channelId: inferredChannelId,
+        senderId: u.identifier,
+        senderName: u.uname,
+        content: lastUser.content.trim(),
+        timestamp: new Date(),
+      };
+
+      const pipelineResult = await this.agentService.handleMessage(inbound, {
+        userId: u.uid,
+        threadId: context.threadId,
+        actorTelegramId: context.actorTelegramId,
+        model: forceModel,
+      });
+
+      const responseContent = pipelineResult.agentResponse || '';
+      return {
+        handled: true,
+        response:
+          (retryPick
+            ? `🔁 Retry với model khác: ${forceModel}\n\n`
+            : `🔁 Retry (force model): ${forceModel}\n\n`) + responseContent,
+      };
     }
 
     if (/^\/clean_media_incoming(?:@\S+)?$/i.test(text)) {
@@ -431,6 +648,33 @@ export class GatewayService {
       return { handled: true, response: JSON.stringify(result, null, 2) };
     }
 
+    const cronManageMatch = text.match(/^\/cron_manage(?:@\S+)?(?:\s+([\s\S]*))?$/i);
+    if (cronManageMatch) {
+      const rawParams = (cronManageMatch[1] || '').trim();
+      if (!rawParams) {
+        return {
+          handled: true,
+          response:
+            '❌ /cron_manage cần JSON params. Ví dụ: /cron_manage {"action":"list_n8n"}',
+        };
+      }
+      const parsed = this.parseParamsFromRestOrFail(
+        rawParams,
+        '❌ /cron_manage',
+      );
+      if (parsed.ok === false) {
+        return { handled: true, response: parsed.message };
+      }
+      const result = await this.skillsService.executeSkill('cron_manage', {
+        userId: context.userId,
+        threadId: context.threadId,
+        actorTelegramId: context.actorTelegramId,
+        runId: `cmd-cron-manage-${Date.now()}`,
+        parameters: parsed.params,
+      });
+      return { handled: true, response: JSON.stringify(result, null, 2) };
+    }
+
     const updateSkillMatch = text.match(
       /^\/update_skill(?:@\S+)?\s+([a-zA-Z0-9_.-]+)\s*([\s\S]*)$/i,
     );
@@ -508,67 +752,6 @@ export class GatewayService {
       return { handled: true, response: JSON.stringify(result, null, 2) };
     }
 
-    // /run_task <task_id|task_code>
-    const runTaskMatch = text.match(/^\/run_task(?:@\S+)?\s+(\S+)\s*$/i);
-    if (runTaskMatch) {
-      const taskRef = runTaskMatch[1].trim();
-      const u = await this.usersService.findById(context.userId);
-      if (!u || u.level === UserLevel.CLIENT) {
-        return {
-          handled: true,
-          response: '❌ Chỉ owner và colleague mới có thể chạy task.',
-        };
-      }
-      try {
-        const taskId = Number(taskRef);
-        const tasks = await this.tasksService.list(context.userId);
-        const target = !isNaN(taskId)
-          ? tasks.find((t) => t.id === taskId)
-          : tasks.find((t) => t.code === taskRef);
-        if (!target) {
-          return {
-            handled: true,
-            response: `❌ Không tìm thấy task "${taskRef}". Dùng /run_task <task_id> hoặc /run_task <task_code>.`,
-          };
-        }
-        const { runId } = await this.tasksService.enqueueRunForUser(target.id, context.userId);
-        return {
-          handled: true,
-          response: `✅ Đã enqueue task "${target.name}" (code: ${target.code}).\nRun ID: ${runId}\nKiểm tra tiến trình qua API: GET /tasks/runs/${runId}`,
-        };
-      } catch (e) {
-        return {
-          handled: true,
-          response: `❌ Lỗi khi chạy task: ${e instanceof Error ? e.message : String(e)}`,
-        };
-      }
-    }
-
-    // /run_workflow <workflow_id>
-    const runWorkflowMatch = text.match(/^\/run_workflow(?:@\S+)?\s+(\d+)\s*$/i);
-    if (runWorkflowMatch) {
-      const wfId = parseInt(runWorkflowMatch[1], 10);
-      const u = await this.usersService.findById(context.userId);
-      if (!u || u.level === UserLevel.CLIENT) {
-        return {
-          handled: true,
-          response: '❌ Chỉ owner và colleague mới có thể chạy workflow.',
-        };
-      }
-      try {
-        const { runId } = await this.taskWorkflowsService.enqueueRunForUser(wfId, context.userId);
-        return {
-          handled: true,
-          response: `✅ Đã enqueue workflow #${wfId}.\nRun ID: ${runId}\nKiểm tra tiến trình qua API: GET /task-workflows/runs/${runId}`,
-        };
-      } catch (e) {
-        return {
-          handled: true,
-          response: `❌ Lỗi khi chạy workflow: ${e instanceof Error ? e.message : String(e)}`,
-        };
-      }
-    }
-
     return { handled: false };
   }
 
@@ -584,8 +767,14 @@ export class GatewayService {
     private readonly configService: ConfigService,
     private readonly stopAllService: StopAllService,
     private readonly usersService: UsersService,
-    private readonly tasksService: TasksService,
-    private readonly taskWorkflowsService: TaskWorkflowsService,
+    private readonly agentFeedback: AgentFeedbackService,
+    private readonly modelPolicy: ModelPolicyService,
+    private readonly globalConfigService: GlobalConfigService,
+    @InjectRepository(Workflow)
+    private readonly workflowRepo: Repository<Workflow>,
+    @InjectRepository(WorkflowNode)
+    private readonly workflowNodeRepo: Repository<WorkflowNode>,
+    @Optional() private readonly interactionMemoryService?: InteractionMemoryService,
     @Optional() private readonly preferenceExtractor?: PreferenceExtractorService,
   ) {}
 
@@ -1410,6 +1599,46 @@ export class GatewayService {
         tokensUsed: m.tokensUsed,
         createdAt: m.createdAt,
       })),
+    };
+  }
+
+  async listWebThreads(userId: number) {
+    const threads = await this.threadsService.listByUserId(userId, true);
+    const webThreads = threads.filter((t) => t.platform === ChatPlatform.WEB);
+    return {
+      items: webThreads.map((t) => ({
+        threadId: t.id,
+        title: t.title,
+        isActive: t.isActive,
+        activeOpenclawAgentId: t.activeOpenclawAgentId,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      })),
+    };
+  }
+
+  async switchWebThread(userId: number, threadId: string) {
+    const nextThread = await this.threadsService.findById(threadId);
+    if (!nextThread || nextThread.userId !== userId) {
+      throw new NotFoundException('Thread not found');
+    }
+    if (nextThread.platform !== ChatPlatform.WEB) {
+      throw new BadRequestException('Only WEB thread can be switched by this API');
+    }
+
+    await this.threadsService.deactivateActiveByUserAndPlatformAndActorKey(
+      userId,
+      ChatPlatform.WEB,
+      {},
+    );
+    await this.threadsService.activate(threadId);
+
+    const switched = await this.threadsService.findById(threadId);
+    return {
+      threadId,
+      isActive: true,
+      activeOpenclawAgentId: switched?.activeOpenclawAgentId ?? null,
+      message: `Switched active thread to ${threadId}`,
     };
   }
 

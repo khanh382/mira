@@ -35,6 +35,45 @@ export class BotBootstrapService implements OnModuleInit {
   }
 
   /**
+   * Trigger ngay sau khi /bot-users/set thành công để bot mới hoạt động tức thì,
+   * không cần chờ cron hot-reload.
+   */
+  async syncBotByUserId(userId: number): Promise<void> {
+    const baseUrl = this.configService.get<string>('WEBHOOK_BASE_URL');
+    if (!baseUrl) return;
+    const normalizedBase = baseUrl.replace(/\/+$/, '');
+    const bot = await this.botUserRepo.findOne({ where: { userId } });
+    if (!bot) return;
+
+    if (bot.telegramBotToken) {
+      const changed = await this.syncTelegramWebhook(
+        bot.telegramBotToken,
+        normalizedBase,
+      );
+      if (changed || !this.telegramCommandsOk.has(bot.telegramBotToken)) {
+        const cmdOk = await this.deliveryService.setTelegramBotCommands(
+          bot.telegramBotToken,
+        );
+        if (cmdOk) this.telegramCommandsOk.add(bot.telegramBotToken);
+      }
+    }
+
+    if (bot.discordBotToken) {
+      this.ensureDiscordRegistered(bot.discordBotToken, normalizedBase);
+      if (!this.discordSlashOk.has(bot.discordBotToken)) {
+        const slashOk = await this.deliveryService.registerDiscordGlobalSlashCommands(
+          bot.discordBotToken,
+        );
+        if (slashOk) this.discordSlashOk.add(bot.discordBotToken);
+      }
+    }
+
+    if (bot.zaloBotToken) {
+      this.ensureZaloRegistered(bot.zaloBotToken, normalizedBase);
+    }
+  }
+
+  /**
    * Hot-reload: quét DB mỗi 60s, đăng ký webhook cho token mới/thay đổi.
    */
   @Cron('0 */5 * * * *')
@@ -120,7 +159,7 @@ export class BotBootstrapService implements OnModuleInit {
     botToken: string,
     baseUrl: string,
   ): Promise<boolean> {
-    const webhookUrl = `${baseUrl}/webhooks/telegram/${botToken}`;
+    const webhookUrl = `${baseUrl}/api/v1/webhooks/telegram/${botToken}`;
     const cacheKey = `tg:${botToken}`;
 
     if (this.registeredWebhooks.get(cacheKey) === webhookUrl) {
@@ -130,6 +169,7 @@ export class BotBootstrapService implements OnModuleInit {
     const ok = await this.deliveryService.setTelegramWebhook(
       botToken,
       webhookUrl,
+      { dropPendingUpdates: true },
     );
     if (ok) {
       this.registeredWebhooks.set(cacheKey, webhookUrl);
@@ -144,7 +184,7 @@ export class BotBootstrapService implements OnModuleInit {
     const cacheKey = `dc:${botToken}`;
     if (this.registeredWebhooks.has(cacheKey)) return;
 
-    const url = `${baseUrl}/webhooks/discord/${botToken}`;
+    const url = `${baseUrl}/api/v1/webhooks/discord/${botToken}`;
     this.registeredWebhooks.set(cacheKey, url);
     this.logger.log(
       `Discord interaction endpoint: ${url} ` +
@@ -156,7 +196,7 @@ export class BotBootstrapService implements OnModuleInit {
     const cacheKey = `zl:${botToken}`;
     if (this.registeredWebhooks.has(cacheKey)) return;
 
-    const url = `${baseUrl}/webhooks/zalo/${botToken}`;
+    const url = `${baseUrl}/api/v1/webhooks/zalo/${botToken}`;
     this.registeredWebhooks.set(cacheKey, url);
     this.logger.log(
       `Zalo OA webhook endpoint: ${url} ` +

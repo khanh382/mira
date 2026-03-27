@@ -13,12 +13,14 @@ import { BotUsersService } from './bot-users.service';
 import { SetBotUserDto } from './dto/bot-user-settings.dto';
 import { UsersService } from '../users/users.service';
 import { UserLevel } from '../users/entities/user.entity';
+import { BotBootstrapService } from './bot-bootstrap.service';
 
 @Controller('bot-users')
 export class BotUsersController {
   constructor(
     private readonly botUsersService: BotUsersService,
     private readonly usersService: UsersService,
+    private readonly botBootstrapService: BotBootstrapService,
   ) {}
 
   private async assertOwnerOrColleague(uid: number): Promise<void> {
@@ -40,19 +42,18 @@ export class BotUsersController {
     const discord = body.discord_bot_token?.trim();
     const slack = body.slack_bot_token?.trim();
     const zalo = body.zalo_bot_token?.trim();
-    const googlePath = body.google_console_cloud_json_path?.trim();
 
     if (telegram) patch['telegramBotToken'] = telegram;
     if (discord) patch['discordBotToken'] = discord;
     if (slack) patch['slackBotToken'] = slack;
     if (zalo) patch['zaloBotToken'] = zalo;
-    if (googlePath) patch['googleConsoleCloudJsonPath'] = googlePath;
 
     if (Object.keys(patch).length === 0) {
       throw new BadRequestException('No valid fields to set');
     }
 
     const row = await this.botUsersService.upsertByUserId(userId, patch);
+    await this.botBootstrapService.syncBotByUserId(userId);
     return this.botUsersService.toPublicRecord(row);
   }
 

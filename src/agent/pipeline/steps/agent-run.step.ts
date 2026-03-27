@@ -113,6 +113,20 @@ export class AgentRunStep {
       }
     }
 
+    // Safety net: always produce a response for interactive channels.
+    if (!context.agentResponse && this.isInteractiveChannel(context.sourceChannelId)) {
+      const lastTool =
+        Array.isArray(context.agentToolCalls) && context.agentToolCalls.length
+          ? context.agentToolCalls[context.agentToolCalls.length - 1]
+          : null;
+      const lastSkill = lastTool?.skillCode ? String(lastTool.skillCode) : '';
+      const hint = lastSkill ? ` (tool gần nhất: ${lastSkill})` : '';
+      context.agentResponse =
+        'Mình đã chạy một số bước nhưng chưa tổng hợp được kết quả cuối cùng' +
+        hint +
+        '. Bạn gửi lại `/retry` hoặc nói rõ bạn muốn mình dừng ở bước nào / cần xuất file gì.';
+    }
+
     await this.taskMemoryService.recordAfterAgentRun(context);
 
     await this.hooksService.executeVoidPluginHook(PluginHookName.AGENT_END, {
@@ -474,6 +488,41 @@ export class AgentRunStep {
           }
         }
         if (!this.naturalToolBehavior) {
+          const httpParams = this.extractExplicitHttpRequestParams(
+            context.processedContent,
+          );
+          const hasHttpRequestTool = (llmInput.tools ?? tools).some(
+            (t) => t.name === 'http_request',
+          );
+          if (httpParams && hasHttpRequestTool) {
+            this.logger.warn(
+              `[${context.runId}] No tool_calls; fallback to explicit http_request params.`,
+            );
+            const fallbackToolCall: IToolCall = {
+              id: `fallback_http_request_${Date.now()}`,
+              name: 'http_request',
+              arguments: JSON.stringify(httpParams),
+            };
+            messages.push({
+              role: 'assistant',
+              content: '',
+              toolCalls: [fallbackToolCall],
+            });
+            const { skillCode, result, record } = await this.executeToolCall(
+              fallbackToolCall,
+              context,
+            );
+            allToolCalls.push(record);
+            const toolContent = serializeToolResultForLlm(result);
+            messages.push({
+              role: 'tool',
+              toolCallId: fallbackToolCall.id,
+              content: toolContent,
+            });
+            continue;
+          }
+        }
+        if (!this.naturalToolBehavior) {
           const recovered =
             await this.tryRecoverSimulatedSkillsRegistryFromAssistantText(
               context,
@@ -643,6 +692,56 @@ export class AgentRunStep {
     if (!match?.[1]) return null;
     const command = match[1].trim().replace(/^`+|`+$/g, '');
     return command.length > 0 ? command : null;
+  }
+
+  private extractExplicitHttpRequestParams(
+    text: string,
+  ): Record<string, unknown> | null {
+    const raw = String(text ?? '').replace(/\r/g, '');
+    // Require at least url + method signals to avoid false positives.
+    const urlMatch = raw.match(/\burl\s*:\s*(https?:\/\/[^\s]+)\b/i);
+    const methodMatch = raw.match(/\bmethod\s*:\s*(GET|POST|PUT|PATCH|DELETE)\b/i);
+    if (!urlMatch || !methodMatch) return null;
+
+    const authCodeMatch = raw.match(/\bauthcode\s*:\s*([a-z0-9._-]+)\b/i);
+    const headersLineMatch = raw.match(/\bheaders\s*:\s*([^\n]+)\n?/i);
+    const bodyIndex = raw.toLowerCase().indexOf('body json');
+
+    const params: Record<string, unknown> = {
+      url: urlMatch[1]!.trim(),
+      method: methodMatch[1]!.toUpperCase(),
+    };
+    if (authCodeMatch?.[1]) params.authCode = authCodeMatch[1].trim();
+
+    if (headersLineMatch?.[1]) {
+      const headersText = headersLineMatch[1].trim();
+      // Accept "Key=Value, Key2=Value2" or "Key: Value".
+      const headers: Record<string, string> = {};
+      for (const part of headersText.split(/[,;]+/g)) {
+        const p = part.trim();
+        if (!p) continue;
+        const kv = p.split(/[:=]/);
+        if (kv.length < 2) continue;
+        const k = kv[0]!.trim();
+        const v = kv.slice(1).join(':').trim();
+        if (k && v) headers[k] = v;
+      }
+      if (Object.keys(headers).length > 0) params.headers = headers;
+    }
+
+    if (bodyIndex >= 0) {
+      const after = raw.slice(bodyIndex);
+      const jsonMatch = after.match(/\{[\s\S]*\}/m);
+      if (jsonMatch?.[0]) {
+        try {
+          params.body = JSON.parse(jsonMatch[0]);
+        } catch {
+          // leave body unset; http_request can still run (may error explicitly)
+        }
+      }
+    }
+
+    return params;
   }
 
   private async executeToolCall(

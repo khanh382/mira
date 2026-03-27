@@ -117,14 +117,19 @@ export class BotDeliveryService {
   async setTelegramWebhook(
     botToken: string,
     webhookUrl: string,
+    options?: { dropPendingUpdates?: boolean },
   ): Promise<boolean> {
     try {
+      const dropPendingUpdates = options?.dropPendingUpdates ?? true;
       const res = await fetch(
         `https://api.telegram.org/bot${botToken}/setWebhook`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: webhookUrl }),
+          body: JSON.stringify({
+            url: webhookUrl,
+            drop_pending_updates: dropPendingUpdates,
+          }),
         },
       );
       const data = (await res.json()) as any;

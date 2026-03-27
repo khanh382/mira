@@ -1,0 +1,48 @@
+{
+  "workflow": {
+    "code": "news_to_web_basic",
+    "name": "News To Web Basic",
+    "description": "Lay bai viet moi nhat, viet lai, tao anh, dang len website."
+  },
+  "nodes": [
+    {
+      "name": "fetch_news",
+      "toolCode": "web_fetch",
+      "promptTemplate": "Doc noi dung bai viet tu URL: {input.newsUrl}",
+      "commandCode": "{\"url\":\"{input.newsUrl}\"}",
+      "maxAttempts": 5
+    },
+    {
+      "name": "rewrite_content",
+      "toolCode": null,
+      "promptTemplate": "Viet lai bai viet sau theo phong cach thuong hieu, ngan gon va ro rang. Noi dung goc: {nodes.fetch_news.content}",
+      "modelOverride": null,
+      "maxAttempts": 5
+    },
+    {
+      "name": "generate_image_prompt",
+      "toolCode": null,
+      "promptTemplate": "Tao prompt tao anh phu hop voi bai viet sau: {nodes.rewrite_content.content}",
+      "modelOverride": null,
+      "maxAttempts": 5
+    },
+    {
+      "name": "publish_post",
+      "toolCode": "http_request",
+      "promptTemplate": "Dang bai len website voi title, content, image_prompt. title={input.title}, content={nodes.rewrite_content.content}, imagePrompt={nodes.generate_image_prompt.content}",
+      "commandCode": "{\"method\":\"POST\",\"url\":\"{input.websiteApiUrl}\",\"body\":{\"title\":\"{input.title}\",\"content\":\"{nodes.rewrite_content.content}\",\"imagePrompt\":\"{nodes.generate_image_prompt.content}\"}}",
+      "maxAttempts": 5
+    }
+  ],
+  "edges": [
+    { "from": "fetch_news", "to": "rewrite_content", "conditionExpr": "$.nodes.fetch_news.success == true", "priority": 10 },
+    { "from": "fetch_news", "to": "publish_post", "isDefault": true, "priority": 999 },
+    { "from": "rewrite_content", "to": "generate_image_prompt", "conditionExpr": "$.nodes.rewrite_content.success == true", "priority": 10 },
+    { "from": "generate_image_prompt", "to": "publish_post", "conditionExpr": "$.nodes.generate_image_prompt.success == true", "priority": 10 }
+  ],
+  "inputExample": {
+    "newsUrl": "https://example.com/news/latest",
+    "websiteApiUrl": "https://example.com/wp-json/custom/v1/posts",
+    "title": "Tin tuc moi nhat"
+  }
+}

@@ -10,7 +10,10 @@ import {
 } from '../../interfaces/skill-runner.interface';
 import { ModelTier } from '../../../pipeline/model-router/model-tier.enum';
 import { ScheduledTasksService } from '../../../scheduler/scheduled-tasks.service';
-import { TaskSource } from '../../../scheduler/entities/scheduled-task.entity';
+import {
+  ScheduledTargetType,
+  TaskSource,
+} from '../../../scheduler/entities/scheduled-task.entity';
 
 const PARAMETERS_SCHEMA = {
   type: 'object',
@@ -19,7 +22,7 @@ const PARAMETERS_SCHEMA = {
       type: 'string',
       enum: [
         'list',
-        'add',
+        'add_n8n',
         'remove',
         'pause',
         'resume',
@@ -27,7 +30,7 @@ const PARAMETERS_SCHEMA = {
         'set_global_rules',
       ],
       description:
-        'Action: list, add, remove, pause, resume, status, set_global_rules (owner only - thiết lập quy tắc chung)',
+        'Action: list, add_n8n, remove, pause, resume, status, set_global_rules (owner only - thiết lập quy tắc chung)',
     },
     taskCode: {
       type: 'string',
@@ -43,10 +46,24 @@ const PARAMETERS_SCHEMA = {
       description:
         'Cron expression. Examples: "0 7 * * *" (7AM daily), "*/30 * * * *" (every 30 min), "0 0 * * 1" (Monday midnight)',
     },
-    prompt: {
+    workflowKey: {
       type: 'string',
       description:
-        'The instruction/prompt that the agent will execute on each tick. Be specific and actionable.',
+        '[add_n8n] n8n workflow key (must be allowlisted) to dispatch on each tick.',
+    },
+    payload: {
+      type: 'object',
+      description: '[add_n8n] Optional JSON payload template (no secrets).',
+    },
+    notifyChannelId: {
+      type: 'string',
+      enum: ['telegram', 'discord', 'zalo', 'slack', 'webchat'],
+      description:
+        '[add_n8n] Optional: notify channel on completion (webchat can omit targetId).',
+    },
+    notifyTargetId: {
+      type: 'string',
+      description: '[add_n8n] Optional: target id for non-webchat notifications.',
     },
     allowedSkills: {
       type: 'array',
@@ -94,10 +111,9 @@ const PARAMETERS_SCHEMA = {
   name: 'Cron Job Manager',
   description:
     'Manage scheduled tasks (cron jobs & heartbeat). ' +
-    'Can: list all tasks, add new scheduled task, remove/pause/resume tasks, check status. ' +
-    'Each task runs an agent prompt on a cron schedule with retry policy. ' +
-    'If a task fails 3 times consecutively, it auto-pauses (owner must resume). ' +
-    'Use for: daily reports, periodic email checks, automated social media posts, data sync, etc.',
+    'Can: list all tasks, add_n8n (dispatch hidden n8n workflow), remove/pause/resume tasks, check status. ' +
+    'Each task runs on a cron schedule with retry policy. ' +
+    'If a task fails 3 ticks consecutively, it auto-pauses (owner must resume).',
   category: SkillCategory.RUNTIME,
   parametersSchema: PARAMETERS_SCHEMA,
   ownerOnly: true,
@@ -130,8 +146,8 @@ export class CronManageSkill implements ISkillRunner {
       switch (action) {
         case 'list':
           return this.handleList(context, start);
-        case 'add':
-          return this.handleAdd(context, start);
+        case 'add_n8n':
+          return this.handleAddN8n(context, start);
         case 'remove':
           return this.handleRemove(context, start);
         case 'pause':
@@ -174,6 +190,8 @@ export class CronManageSkill implements ISkillRunner {
           cron: t.cronExpression,
           status: t.status,
           source: t.source,
+          targetType: (t as any).targetType,
+          n8nWorkflowKey: (t as any).n8nWorkflowKey,
           consecutiveFailures: t.consecutiveFailures,
           maxRetries: t.maxRetries,
           totalSuccesses: t.totalSuccesses,
@@ -186,7 +204,7 @@ export class CronManageSkill implements ISkillRunner {
     };
   }
 
-  private async handleAdd(
+  private async handleAddN8n(
     context: ISkillExecutionContext,
     start: number,
   ): Promise<ISkillResult> {
@@ -194,19 +212,21 @@ export class CronManageSkill implements ISkillRunner {
       taskCode,
       name,
       cronExpression,
-      prompt,
-      allowedSkills,
+      workflowKey,
+      payload,
+      notifyChannelId,
+      notifyTargetId,
       maxRetries = 3,
       maxModelTier,
       timeoutMs = 120000,
       description,
     } = context.parameters as any;
 
-    if (!taskCode || !name || !cronExpression || !prompt) {
+    if (!taskCode || !name || !cronExpression || !workflowKey) {
       return {
         success: false,
         error:
-          'Missing required fields: taskCode, name, cronExpression, prompt',
+          'Missing required fields: taskCode, name, cronExpression, workflowKey',
         metadata: { durationMs: Date.now() - start },
       };
     }
@@ -217,8 +237,16 @@ export class CronManageSkill implements ISkillRunner {
       name,
       description,
       cronExpression,
-      agentPrompt: prompt,
-      allowedSkills: allowedSkills ?? null,
+      targetType: ScheduledTargetType.N8N_WORKFLOW,
+      agentPrompt: null,
+      n8nWorkflowKey: String(workflowKey).trim(),
+      n8nPayload:
+        payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? (payload as Record<string, unknown>)
+          : null,
+      notifyChannelId: notifyChannelId ? String(notifyChannelId) : null,
+      notifyTargetId: notifyTargetId ? String(notifyTargetId) : null,
+      allowedSkills: null,
       source: TaskSource.AGENT,
       maxRetries,
       maxModelTier: maxModelTier ?? null,
@@ -232,7 +260,7 @@ export class CronManageSkill implements ISkillRunner {
         code: task.code,
         cron: task.cronExpression,
         maxRetries: task.maxRetries,
-        prompt: task.agentPrompt,
+        workflowKey: (task as any).n8nWorkflowKey,
       },
       metadata: { durationMs: Date.now() - start },
     };
